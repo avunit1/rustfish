@@ -24,7 +24,7 @@ jobs:
             target: x86_64-unknown-linux-gnu
             bin: rustfish
             asset: rustfish-linux-x86_64-avx2
-          - os: macos-13        # Intel runner, so the AVX2 binary can be built and tested natively
+          - os: macos-15-intel        # Intel runner, so the AVX2 binary can be built and tested natively
             target: x86_64-apple-darwin
             bin: rustfish
             asset: rustfish-macos-x86_64-avx2
