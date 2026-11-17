@@ -2,6 +2,13 @@
 name = "rustfish"
 version = "0.1.0"
 edition = "2021"
+description = "A node-for-node faithful Rust rewrite of the Stockfish chess engine"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/avunit1/rustfish"
+homepage = "https://github.com/avunit1/rustfish"
+keywords = ["chess", "chess-engine", "nnue", "stockfish", "uci"]
+categories = ["games"]
+publish = false
 
 [profile.release]
 opt-level = 3
@@ -15,4 +22,3 @@ lto = "fat"
 codegen-units = 1
 
 [dependencies]
-

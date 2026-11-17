@@ -1,0 +1,82 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test & bench parity (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+
+    env:
+      # Overrides target-cpu=native from .cargo/config.toml so CI builds do not
+      # depend on the runner's exact CPU. x86-64-v3 = AVX2 + BMI2.
+      RUSTFLAGS: "-C target-cpu=x86-64-v3"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: false   # the network is fetched below through a cache to save LFS bandwidth
+
+      - name: Create LFS file list
+        shell: bash
+        run: git lfs ls-files -l | cut -d' ' -f1 | sort > .lfs-assets-id
+
+      - name: Restore LFS cache
+        uses: actions/cache@v4
+        with:
+          path: .git/lfs
+          key: lfs-${{ runner.os }}-${{ hashFiles('.lfs-assets-id') }}
+
+      - name: Pull LFS objects
+        run: git lfs pull
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rustfish
+
+      - name: Unit & integration tests
+        working-directory: rustfish
+        run: cargo test --release
+
+      - name: Bench parity (must be exactly 1,442,480 nodes)
+        working-directory: rustfish
+        shell: bash
+        run: |
+          cargo build --release
+          BIN=target/release/rustfish
+          [ -f "$BIN.exe" ] && BIN="$BIN.exe"
+          OUT=$("$BIN" bench 16 1 13 2>&1)
+          echo "$OUT" | tail -n 8
+          NODES=$(echo "$OUT" | grep -i "nodes searched" | grep -oE '[0-9]+' | tail -n 1)
+          echo "Nodes searched: $NODES"
+          if [ "$NODES" != "1442480" ]; then
+            echo "::error::bench node count is '$NODES', expected 1442480"
+            exit 1
+          fi
+
+      # Style checks are advisory until the codebase is fully fmt/clippy clean.
+      # Remove continue-on-error once they pass.
+      - name: rustfmt
+        working-directory: rustfish
+        continue-on-error: true
+        run: cargo fmt --check
+
+      - name: clippy
+        working-directory: rustfish
+        continue-on-error: true
+        run: cargo clippy --release -- -D warnings

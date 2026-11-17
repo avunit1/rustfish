@@ -1,0 +1,47 @@
+RustFish
+========
+
+RustFish is a Rust port of the Stockfish chess engine and is a derivative work
+of Stockfish. It is distributed under the GNU General Public License, version 3
+(see the LICENSE file).
+
+Stockfish
+---------
+Stockfish, a UCI chess playing engine derived from Glaurung 2.1
+Copyright (C) 2004-2026 The Stockfish developers (see the AUTHORS file in the
+upstream repository)
+
+Upstream project:  https://github.com/official-stockfish/Stockfish
+Upstream license:  GNU General Public License v3.0 or later
+
+The search algorithm, move ordering, history heuristics, time management,
+NNUE architecture and feature sets, and UCI behavior implemented in RustFish
+are ports of the corresponding Stockfish C++ code. Credit for their design
+belongs to the Stockfish developers and the wider computer chess community.
+
+NNUE network
+------------
+The embedded neural network file (nn-bddd9d57eb87.nnue) is the official
+Stockfish network, trained and distributed by the Stockfish project and
+licensed under the GNU General Public License v3.0. Network training data and
+tooling are credited to the Stockfish project and the Leela Chess Zero
+project, whose data is used in Stockfish network training.
+
+Syzygy tablebases
+-----------------
+The Syzygy tablebase prober is a port of the Stockfish/Pyrrhic-derived probing
+code (originally by Ronald de Man, with contributions from Stockfish developers
+and the Pyrrhic project by Andrew Grant). Syzygy tablebase files themselves are
+not distributed with RustFish.
+
+Tools used for testing
+----------------------
+- fastchess (Disservin) - https://github.com/Disservin/fastchess (MIT)
+- python-chess (Niklas Fiekas) - https://github.com/niklasf/python-chess (GPL-3.0+)
+
+The fastchess binary and sources are used only for testing and are not part of
+this repository or its releases.
+
+Please verify the exact years and wording of upstream copyright notices
+against the Stockfish version this port was derived from, and retain them in
+any file that is a direct translation of a Stockfish source file.

@@ -6,12 +6,22 @@
 
 **A complete, node-for-node faithful rewrite of the Stockfish chess engine in idiomatic, zero-overhead Rust.**
 
+[![CI](https://github.com/avunit1/rustfish/actions/workflows/ci.yml/badge.svg)](https://github.com/avunit1/rustfish/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/avunit1/rustfish?include_prereleases)](https://github.com/avunit1/rustfish/releases)
 ![Language](https://img.shields.io/badge/language-Rust-orange?logo=rust)
 ![UCI](https://img.shields.io/badge/protocol-UCI-blue)
 ![NNUE](https://img.shields.io/badge/eval-NNUE%20(AVX2)-green)
 ![Bench parity](https://img.shields.io/badge/bench-1%2C442%2C480%20nodes%20(exact)-brightgreen)
 ![Perft](https://img.shields.io/badge/perft%206-119%2C060%2C324%20(exact)-brightgreen)
 ![License](https://img.shields.io/badge/license-GPL--3.0-lightgrey)
+
+</div>
+
+<div align="center">
+
+<img src="img/ec-screenshot.png" alt="RustFish playing Stockfish in En Croissant; the game ended in a draw" width="860">
+
+<sub>RustFish vs. Stockfish in <a href="https://encroissant.org">En Croissant</a>. The game ended in a draw.</sub>
 
 </div>
 
@@ -30,7 +40,8 @@
 9. [Repository Layout](#repository-layout)
 10. [Reproducing the Benchmarks](#reproducing-the-benchmarks)
 11. [Known Limitations](#known-limitations)
-12. [Credits & License](#credits--license)
+12. [Contributing](#contributing)
+13. [Credits & License](#credits--license)
 
 ---
 
@@ -135,7 +146,7 @@ Grab the latest build for your platform from the **[Releases page](https://githu
 | Linux x64 | `rustfish-linux-x86_64-avx2` |
 | macOS (Intel) | `rustfish-macos-x86_64-avx2` |
 
-On Linux and macOS, make the file executable after downloading:
+Each file has a matching `.sha256` checksum next to it. On Linux and macOS, make the file executable after downloading:
 
 ```bash
 chmod +x rustfish-linux-x86_64-avx2
@@ -238,7 +249,7 @@ If `bench` prints `1442480` nodes searched, your build is behaviorally identical
 
 ## Usage
 
-RustFish is a standard [UCI](https://www.shredderchess.com/chess-features/uci-universal-chess-interface.html) engine. Point any UCI-compatible GUI (Cute Chess, Arena, En Croissant, Lucas Chess, ...) at the executable, or drive it directly from a terminal:
+RustFish is a standard [UCI](https://www.shredderchess.com/chess-features/uci-universal-chess-interface.html) engine. Point any UCI-compatible GUI (En Croissant, Cute Chess, Arena, Lucas Chess, ...) at the executable, or drive it directly from a terminal:
 
 ```text
 $ ./rustfish
@@ -287,7 +298,7 @@ The rewrite was developed in strictly **gated milestones**; no layer was started
 | **Gate 4** | >= 0 Elo vs. C++ Stockfish with zero crashes, time losses or illegal moves | +10.43 ± 11.63 Elo, clean |
 | **UCI** | `fastchess --compliance` | 40 / 40 |
 
-The unit and integration tests (`cargo test --release`: 12/12 passing) cover Zobrist/cuckoo tables, six perft suites, full NNUE static and incremental evaluation, and root-search behavior.
+The unit and integration tests (`cargo test --release`: 12/12 passing) cover Zobrist/cuckoo tables, six perft suites, full NNUE static and incremental evaluation, and root-search behavior. Continuous integration re-runs them, plus the `bench` node-count check, on every push.
 
 Matching Stockfish's node counts exactly is a very strict test: a single differing history update, reduction term, or pruning condition changes the tree. Several divergences were tracked down during development by instrumenting both engines with identical trace output and bisecting the search ply by ply (for example a missing pawn-tracking update in `do_move`, an incorrect `Move::make`, a `partial_insertion_sort` discrepancy, and a quiet-history malus mismatch).
 
@@ -364,7 +375,7 @@ C++ Stockfish maps its NNUE weights into Windows shared memory so concurrent pro
 
 - `opt-level = 3`, fat LTO, single codegen unit, `panic = "abort"`, `target-cpu=native`.
 - Full **PGO** pipeline via `cargo-pgo`, with the `bench` workload as the profile.
-- **GitHub Actions** workflow (`.github/workflows/release.yml`) that builds Windows, Linux and macOS (Intel) binaries and attaches them to every published release.
+- **GitHub Actions**: `ci.yml` runs the tests and the `bench` parity check on every push and pull request; `release.yml` builds Windows, Linux and macOS (Intel) binaries with SHA-256 checksums and attaches them to every published release.
 
 ---
 
@@ -373,10 +384,14 @@ C++ Stockfish maps its NNUE weights into Windows shared memory so concurrent pro
 ```text
 .
 ├── .github/workflows/
+│   ├── ci.yml                # Tests + bench-parity gate on every push / PR
 │   └── release.yml           # Builds & attaches binaries to each release
-├── .gitattributes            # Git LFS tracking for *.nnue
+├── .gitattributes            # Git LFS tracking for *.nnue, line endings
+├── CHANGELOG.md
+├── CONTRIBUTING.md
 ├── LICENSE                   # GPL-3.0
-├── img/                      # Logos and repository imagery
+├── NOTICE                    # Attribution to Stockfish and other upstream work
+├── img/                      # Logos, screenshots and repository imagery
 └── rustfish/
     ├── Cargo.toml            # Release profile: opt-level 3, fat LTO, 1 CGU, panic=abort
     ├── .cargo/config.toml    # target-cpu=native
@@ -421,8 +436,14 @@ It runs the three suites described above (NPS scaling at 1/4/8/16 threads, the t
 
 ---
 
+## Contributing
+
+Contributions are welcome. Because RustFish's defining property is exact behavioral parity with Stockfish, every change must keep `bench 16 1 13` at **1,442,480 nodes** unless it deliberately tracks an upstream Stockfish change. See [CONTRIBUTING.md](CONTRIBUTING.md) for build, test and pull-request guidelines, and [CHANGELOG.md](CHANGELOG.md) for release history.
+
+---
+
 ## Credits & License
 
-RustFish is a Rust port of **[Stockfish](https://github.com/official-stockfish/Stockfish)**; all credit for the engine's algorithms, NNUE architecture and network goes to the Stockfish developers and community. Thanks also to the authors of [fastchess](https://github.com/Disservin/fastchess), [python-chess](https://github.com/niklasf/python-chess), and [Pyrrhic](https://github.com/AndyGrant/Pyrrhic) / the Syzygy tablebase work.
+RustFish is a Rust port of **[Stockfish](https://github.com/official-stockfish/Stockfish)**; all credit for the engine's algorithms, NNUE architecture and network goes to the Stockfish developers and community. Thanks also to the authors of [fastchess](https://github.com/Disservin/fastchess), [python-chess](https://github.com/niklasf/python-chess), and the Syzygy tablebase work. See [`NOTICE`](NOTICE) for full attribution.
 
 As a derivative work of Stockfish, RustFish is released under the **GNU General Public License v3.0**. See the [`LICENSE`](LICENSE) file for details.
