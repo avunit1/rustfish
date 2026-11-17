@@ -125,23 +125,54 @@ Because the two engines search identical trees, ~94% of games end in draws, so t
 
 ## Installation
 
-### Requirements
+### Option A: Download a prebuilt binary
 
-- **Rust** (stable, 2021 edition or newer): install via [rustup](https://rustup.rs)
-- A **64-bit x86 CPU with AVX2** (Intel Haswell / AMD Excavator or newer; BMI2 recommended)
-- ~1 GB of free RAM to compile (the 138 MB NNUE network is embedded into the binary)
-- Primary target: **Windows x64 (MSVC toolchain)**. The engine uses `core::arch::x86_64` intrinsics, so any x86-64 platform with AVX2 should compile; the shared-memory network mapping is Windows-specific and is simply skipped elsewhere.
+Grab the latest build for your platform from the **[Releases page](https://github.com/avunit1/rustfish/releases)**:
 
-### 1. Clone
+| Platform | File |
+|---|---|
+| Windows x64 | `rustfish-windows-x86_64-avx2.exe` |
+| Linux x64 | `rustfish-linux-x86_64-avx2` |
+| macOS (Intel) | `rustfish-macos-x86_64-avx2` |
+
+On Linux and macOS, make the file executable after downloading:
 
 ```bash
+chmod +x rustfish-linux-x86_64-avx2
+```
+
+Prebuilt binaries require a CPU with **AVX2 and BMI2** (Intel Haswell / AMD Zen or newer). They are built with `target-cpu=x86-64-v3`, so they run on any such CPU. Building from source with `target-cpu=native` (Option B) squeezes out a little more speed on your specific machine.
+
+### Option B: Build from source
+
+#### Requirements
+
+- **Rust** (stable): install via [rustup](https://rustup.rs)
+- **Git LFS**: install from [git-lfs.com](https://git-lfs.com). The NNUE network (`nn-bddd9d57eb87.nnue`, 138 MB) is stored with Git LFS.
+- A **64-bit x86 CPU with AVX2** (Intel Haswell / AMD Excavator or newer; BMI2 recommended)
+- ~1 GB of free RAM to compile (the network is embedded into the binary)
+- Primary target: **Windows x64 (MSVC toolchain)**. The engine uses `core::arch::x86_64` intrinsics, so any x86-64 platform with AVX2 should compile; the shared-memory network mapping is Windows-specific and is skipped elsewhere.
+
+#### 1. Clone (with Git LFS)
+
+```bash
+git lfs install
 git clone https://github.com/avunit1/rustfish.git
 cd rustfish/rustfish
 ```
 
-The official Stockfish network (`nn-bddd9d57eb87.nnue`) is included in the crate directory and is embedded into the executable at compile time via `include_bytes!`, so the resulting binary is fully self-contained.
+> **Important:** the network file is fetched through Git LFS. If you cloned without Git LFS installed, you will have a tiny pointer file instead of the real network and the build will fail or produce a broken engine. Fix it with:
+>
+> ```bash
+> git lfs install
+> git lfs pull
+> ```
+>
+> GitHub's **"Download ZIP"** button does **not** include LFS files, so use `git clone` (or grab a prebuilt binary from Releases).
 
-### 2. Build with full optimizations (fast path)
+The network is embedded into the executable at compile time via `include_bytes!`, so the resulting binary is fully self-contained and needs no external files.
+
+#### 2. Build with full optimizations (fast path)
 
 The repository already ships with the optimal release profile and native-CPU flags:
 
@@ -170,7 +201,7 @@ The binary is produced at `target/release/rustfish` (`rustfish.exe` on Windows).
 
 > `target-cpu=native` tunes the binary for the CPU you build on. Build on the machine you will run on, or the executable may crash with an illegal-instruction error on older CPUs.
 
-### 3. Build the fastest possible version (PGO)
+#### 3. Build the fastest possible version (PGO)
 
 For the last 5-10% of speed, build with **Profile-Guided Optimization** using [`cargo-pgo`](https://github.com/Kobzol/cargo-pgo). This is the exact pipeline used for all benchmark numbers above.
 
@@ -191,7 +222,7 @@ cargo pgo optimize
 
 The optimized binary is written to `target/<target-triple>/release/` (for example `target/x86_64-pc-windows-msvc/release/rustfish.exe`).
 
-### 4. Verify your build
+#### 4. Verify your build
 
 ```bash
 # Run the full test suite (perft, NNUE eval parity, search sanity)
@@ -282,7 +313,7 @@ A complete module-by-module specification, including struct layouts, Zobrist con
 
 ### Search & threading
 
-- **Principal Variation Search** with aspiration windows, null-move pruning, futility/razoring, LMR, singular extensions, ProbCut, and the full set of Stockfish pruning heuristics.
+- **Principal Variation Search** with aspiration windows, null-move pruning, futility pruning, late move reductions, and the rest of Stockfish's pruning and extension heuristics.
 - `movepick.rs` staged move picker; `history.rs` with butterfly, continuation, capture and correction histories (including `SharedHistories`).
 - `tt.rs`: 64-byte cache-line aligned, lockless clustered transposition table.
 - `thread.rs`: **Lazy SMP** thread pool. `timeman.rs`: Stockfish's time-management logic.
@@ -333,6 +364,7 @@ C++ Stockfish maps its NNUE weights into Windows shared memory so concurrent pro
 
 - `opt-level = 3`, fat LTO, single codegen unit, `panic = "abort"`, `target-cpu=native`.
 - Full **PGO** pipeline via `cargo-pgo`, with the `bench` workload as the profile.
+- **GitHub Actions** workflow (`.github/workflows/release.yml`) that builds Windows, Linux and macOS (Intel) binaries and attaches them to every published release.
 
 ---
 
@@ -340,11 +372,15 @@ C++ Stockfish maps its NNUE weights into Windows shared memory so concurrent pro
 
 ```text
 .
+├── .github/workflows/
+│   └── release.yml           # Builds & attaches binaries to each release
+├── .gitattributes            # Git LFS tracking for *.nnue
+├── LICENSE                   # GPL-3.0
 ├── img/                      # Logos and repository imagery
 └── rustfish/
     ├── Cargo.toml            # Release profile: opt-level 3, fat LTO, 1 CGU, panic=abort
     ├── .cargo/config.toml    # target-cpu=native
-    ├── nn-bddd9d57eb87.nnue  # Embedded NNUE network
+    ├── nn-bddd9d57eb87.nnue  # Embedded NNUE network (Git LFS)
     ├── ARCHITECTURE.md       # Module-by-module C++ -> Rust specification
     ├── verify_superiority.py # Speed, smartness & match benchmark suite
     ├── benchmark_results.json
@@ -379,7 +415,8 @@ It runs the three suites described above (NPS scaling at 1/4/8/16 threads, the t
 
 - **High-thread-count scaling.** At 8 and 16 threads RustFish reaches ~71-85% of Stockfish's NPS. Lazy SMP synchronization and shared-structure contention are the next optimization targets. Up to 4 threads it is at or near parity.
 - **Single-thread speed gap.** RustFish runs at about 94-96% of PGO C++ Stockfish's NPS single-threaded; the search tree is identical, so this is purely a throughput gap.
-- **Platform.** Developed and benchmarked on Windows x64 with AVX2. Other x86-64 platforms should work, but are less tested, and non-AVX2 / non-x86 targets are not supported.
+- **Platform support.** Developed and benchmarked on Windows x64 with AVX2. Linux and macOS (Intel) builds are produced by CI but are less tested. Apple Silicon and other ARM targets are not supported because the SIMD code is AVX2-only.
+- **Prebuilt binaries are not PGO builds.** Release binaries are built in CI with fat LTO but without profile-guided optimization, so they run somewhat slower than the PGO numbers reported above. Build from source with the PGO pipeline for peak speed.
 - **Match results** carry wide error bars because near-identical engines draw almost every game; treat them as evidence of parity rather than superiority.
 
 ---
