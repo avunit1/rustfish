@@ -1,0 +1,71 @@
+name: Release binaries
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:        # lets you test the build manually, without a release
+
+permissions:
+  contents: write           # needed to upload release assets
+
+jobs:
+  build:
+    name: Build ${{ matrix.asset }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: rustfish.exe
+            asset: rustfish-windows-x86_64-avx2.exe
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            bin: rustfish
+            asset: rustfish-linux-x86_64-avx2
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            bin: rustfish
+            asset: rustfish-macos-x86_64-avx2
+
+    env:
+      # Overrides target-cpu=native from .cargo/config.toml. "native" would tune
+      # for the CI runner's CPU and could crash on yours. v3 = AVX2 + BMI2.
+      RUSTFLAGS: "-C target-cpu=x86-64-v3"
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true         # the NNUE network lives in Git LFS
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rustfish
+
+      - name: Test (native host only)
+        if: matrix.os != 'macos-latest'
+        working-directory: rustfish
+        run: cargo test --release --target ${{ matrix.target }}
+
+      - name: Build
+        working-directory: rustfish
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Prepare asset
+        shell: bash
+        run: |
+          mkdir dist
+          cp "rustfish/target/${{ matrix.target }}/release/${{ matrix.bin }}" "dist/${{ matrix.asset }}"
+          chmod +x "dist/${{ matrix.asset }}"
+
+      - name: Upload to release
+        if: github.event_name == 'release'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.event.release.tag_name }}" "dist/${{ matrix.asset }}" --clobber
