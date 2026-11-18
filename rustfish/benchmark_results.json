@@ -3,770 +3,24 @@
     "returncode": 0,
     "games": 200,
     "pgn_games": 200,
-    "wins": 9,
-    "losses": 3,
-    "draws": 188,
-    "elo_diff": 10.43,
-    "elo_err": 11.63,
-    "los": "96.07 %",
+    "wins": 11,
+    "losses": 10,
+    "draws": 179,
+    "elo_diff": 1.74,
+    "elo_err": 12.28,
+    "los": "60.93 %",
     "time_losses": 0,
     "illegal_moves": 0,
     "crashes": 0,
-    "raw_tail": "Finished game 185 (stockfish-rs vs stockfish-cpp): 1/2-1/2 {Draw by insufficient mating material}\n\nStarted game 195 of 200 (stockfish-rs vs stockfish-cpp)\n\nFinished game 190 (stockfish-cpp vs stockfish-rs): 1/2-1/2 {Draw by 3-fold repetition}\n\nStarted game 196 of 200 (stockfish-cpp vs stockfish-rs)\n\nFinished game 188 (stockfish-cpp vs stockfish-rs): 1/2-1/2 {Draw by 3-fold repetition}\n\nStarted game 197 of 200 (stockfish-rs vs stockfish-cpp)\n\nFinished game 189 (stockfish-rs vs stockfish-cpp): 1/2-1/2 {Draw by 3-fold repetition}\n\nStarted game 198 of 200 (stockfish-cpp vs stockfish-rs)\n\nFinished game 193 (stockfish-rs vs stockfish-cpp): 1/2-1/2 {Draw by 3-fold repetition}\n\nStarted game 199 of 200 (stockfish-rs vs stockfish-cpp)\n\nFinished game 191 (stockfish-rs vs stockfish-cpp): 1/2-1/2 {Draw by 3-fold repetition}\n\nStarted game 200 of 200 (stockfish-cpp vs stockfish-rs)\n\nFinished game 192 (stockfish-cpp vs stockfish-rs): 1/2-1/2 {Draw by 3-fold repetition}\n\nFinished game 197 (stockfish-rs vs stockfish-cpp): 1/2-1/2 {Draw by 3-fold repetition}\n\nFinished game 198 (stockfish-cpp vs stockfish-rs): 1/2-1/2 {Draw by 3-fold repetition}\n\nFinished game 194 (stockfish-cpp vs stockfish-rs): 1/2-1/2 {Draw by 3-fold repetition}\n\nFinished game 196 (stockfish-cpp vs stockfish-rs): 1/2-1/2 {Draw by 3-fold repetition}\n\nFinished game 200 (stockfish-cpp vs stockfish-rs): 1/2-1/2 {Draw by insufficient mating material}\n\nFinished game 195 (stockfish-rs vs stockfish-cpp): 1/2-1/2 {Draw by fifty moves rule}\n\nFinished game 199 (stockfish-rs vs stockfish-cpp): 1/2-1/2 {Draw by fifty moves rule}\n\n--------------------------------------------------\n\nResults of stockfish-rs vs stockfish-cpp (5+0.05, 1t, 128MB, 8moves_v3.pgn):\n\nElo: 10.43 +/- 11.63, nElo: 43.21 +/- 48.15\n\nLOS: 96.07 %, DrawRatio: 88.00 %, PairsRatio: 3.00\n\nGames: 200, Wins: 9, Losses: 3, Draws: 188, Points: 103.0 (51.50 %)\n\nPtnml(0-2): [0, 3, 88, 9, 0], WL/DD Ratio: 0.00\n\n--------------------------------------------------\n\nFinished match\n\nTotal Time: 00:05:51 (hours:minutes:seconds)\n\n\n"
+    "raw_tail": "Finished game 187 (rustfish vs stockfish-cpp): 1/2-1/2 {Draw by 3-fold repetition}\n\nStarted game 195 of 200 (rustfish vs stockfish-cpp)\n\nFinished game 192 (stockfish-cpp vs rustfish): 1/2-1/2 {Draw by 3-fold repetition}\n\nStarted game 196 of 200 (stockfish-cpp vs rustfish)\n\nFinished game 189 (rustfish vs stockfish-cpp): 1/2-1/2 {Draw by 3-fold repetition}\n\nStarted game 197 of 200 (rustfish vs stockfish-cpp)\n\nFinished game 188 (stockfish-cpp vs rustfish): 1/2-1/2 {Draw by 3-fold repetition}\n\nStarted game 198 of 200 (stockfish-cpp vs rustfish)\n\nFinished game 190 (stockfish-cpp vs rustfish): 1/2-1/2 {Draw by insufficient mating material}\n\nStarted game 199 of 200 (rustfish vs stockfish-cpp)\n\nFinished game 193 (rustfish vs stockfish-cpp): 1/2-1/2 {Draw by insufficient mating material}\n\nStarted game 200 of 200 (stockfish-cpp vs rustfish)\n\nFinished game 191 (rustfish vs stockfish-cpp): 1/2-1/2 {Draw by insufficient mating material}\n\nFinished game 194 (stockfish-cpp vs rustfish): 1/2-1/2 {Draw by 3-fold repetition}\n\nFinished game 198 (stockfish-cpp vs rustfish): 1/2-1/2 {Draw by 3-fold repetition}\n\nFinished game 197 (rustfish vs stockfish-cpp): 1/2-1/2 {Draw by 3-fold repetition}\n\nFinished game 195 (rustfish vs stockfish-cpp): 1/2-1/2 {Draw by insufficient mating material}\n\nFinished game 196 (stockfish-cpp vs rustfish): 1/2-1/2 {Draw by insufficient mating material}\n\nFinished game 199 (rustfish vs stockfish-cpp): 1/2-1/2 {Draw by insufficient mating material}\n\nFinished game 200 (stockfish-cpp vs rustfish): 1/2-1/2 {Draw by insufficient mating material}\n\n--------------------------------------------------\n\nResults of rustfish vs stockfish-cpp (5+0.05, 1t, 128MB, 8moves_v3.pgn):\n\nElo: 1.74 +/- 12.28, nElo: 6.82 +/- 48.15\n\nLOS: 60.93 %, DrawRatio: 87.00 %, PairsRatio: 1.17\n\nGames: 200, Wins: 11, Losses: 10, Draws: 179, Points: 100.5 (50.25 %)\n\nPtnml(0-2): [0, 6, 87, 7, 0], WL/DD Ratio: 0.05\n\n--------------------------------------------------\n\nFinished match\n\nTotal Time: 00:06:12 (hours:minutes:seconds)\n\n\n"
   },
   "part2_tactical": {
     "500": {
       "C++ Stockfish": {
-        "solved": 22,
-        "total": 30,
-        "solve_rate_pct": 73.33,
-        "avg_solve_ms": 30.0,
-        "details": [
-          {
-            "id": "MAT-01",
-            "category": "Mate-in-N",
-            "solved": true,
-            "move": "e7e8",
-            "solve_ms": 2.0,
-            "depth": 50
-          },
-          {
-            "id": "MAT-02",
-            "category": "Mate-in-N",
-            "solved": true,
-            "move": "f8c5",
-            "solve_ms": 2.0,
-            "depth": 245
-          },
-          {
-            "id": "MAT-03",
-            "category": "Mate-in-N",
-            "solved": true,
-            "move": "f2f8",
-            "solve_ms": 1.0,
-            "depth": 245
-          },
-          {
-            "id": "MAT-04",
-            "category": "Mate-in-N",
-            "solved": true,
-            "move": "c4b5",
-            "solve_ms": 3.0,
-            "depth": 245
-          },
-          {
-            "id": "MAT-05",
-            "category": "Mate-in-N",
-            "solved": true,
-            "move": "f6g4",
-            "solve_ms": 383.0,
-            "depth": 18
-          },
-          {
-            "id": "MAT-06",
-            "category": "Mate-in-N",
-            "solved": false,
-            "move": "c3e1",
-            "solve_ms": null,
-            "depth": 20
-          },
-          {
-            "id": "MAT-07",
-            "category": "Mate-in-N",
-            "solved": true,
-            "move": "b1g6",
-            "solve_ms": 1.0,
-            "depth": 245
-          },
-          {
-            "id": "MAT-08",
-            "category": "Mate-in-N",
-            "solved": false,
-            "move": "e1g1",
-            "solve_ms": null,
-            "depth": 19
-          },
-          {
-            "id": "WAC-001",
-            "category": "Tactical",
-            "solved": true,
-            "move": "g3g6",
-            "solve_ms": 1.0,
-            "depth": 245
-          },
-          {
-            "id": "WAC-002",
-            "category": "Tactical",
-            "solved": false,
-            "move": "b3b7",
-            "solve_ms": null,
-            "depth": 19
-          },
-          {
-            "id": "WAC-003",
-            "category": "Tactical",
-            "solved": true,
-            "move": "e3g3",
-            "solve_ms": 1.0,
-            "depth": 21
-          },
-          {
-            "id": "WAC-004",
-            "category": "Tactical",
-            "solved": true,
-            "move": "h6h7",
-            "solve_ms": 1.0,
-            "depth": 245
-          },
-          {
-            "id": "WAC-010",
-            "category": "Tactical",
-            "solved": true,
-            "move": "h4h7",
-            "solve_ms": 1.0,
-            "depth": 25
-          },
-          {
-            "id": "WAC-014",
-            "category": "Tactical",
-            "solved": true,
-            "move": "h3h7",
-            "solve_ms": 3.0,
-            "depth": 61
-          },
-          {
-            "id": "WAC-021",
-            "category": "Tactical",
-            "solved": true,
-            "move": "e7f6",
-            "solve_ms": 82.0,
-            "depth": 17
-          },
-          {
-            "id": "WAC-031",
-            "category": "Tactical",
-            "solved": true,
-            "move": "d3h7",
-            "solve_ms": 3.0,
-            "depth": 100
-          },
-          {
-            "id": "WAC-046",
-            "category": "Tactical",
-            "solved": false,
-            "move": "f4d3",
-            "solve_ms": null,
-            "depth": 21
-          },
-          {
-            "id": "WAC-100",
-            "category": "Tactical",
-            "solved": true,
-            "move": "e5f7",
-            "solve_ms": 1.0,
-            "depth": 52
-          },
-          {
-            "id": "ZUG-01",
-            "category": "Zugzwang",
-            "solved": true,
-            "move": "e1f1",
-            "solve_ms": 1.0,
-            "depth": 42
-          },
-          {
-            "id": "ZUG-02",
-            "category": "Zugzwang",
-            "solved": true,
-            "move": "a1b1",
-            "solve_ms": 34.0,
-            "depth": 49
-          },
-          {
-            "id": "ZUG-03",
-            "category": "Zugzwang",
-            "solved": true,
-            "move": "e1e2",
-            "solve_ms": 31.0,
-            "depth": 21
-          },
-          {
-            "id": "ZUG-04",
-            "category": "Zugzwang",
-            "solved": true,
-            "move": "f3g3",
-            "solve_ms": 3.0,
-            "depth": 43
-          },
-          {
-            "id": "ZUG-05",
-            "category": "Zugzwang",
-            "solved": false,
-            "move": "d6d8",
-            "solve_ms": null,
-            "depth": 19
-          },
-          {
-            "id": "ZUG-06",
-            "category": "Zugzwang",
-            "solved": false,
-            "move": "a4a5",
-            "solve_ms": null,
-            "depth": 30
-          },
-          {
-            "id": "POS-01",
-            "category": "Positional",
-            "solved": false,
-            "move": "e5e7",
-            "solve_ms": null,
-            "depth": 19
-          },
-          {
-            "id": "POS-02",
-            "category": "Positional",
-            "solved": true,
-            "move": "c3d5",
-            "solve_ms": 8.0,
-            "depth": 19
-          },
-          {
-            "id": "POS-03",
-            "category": "Positional",
-            "solved": true,
-            "move": "a4a5",
-            "solve_ms": 1.0,
-            "depth": 17
-          },
-          {
-            "id": "POS-04",
-            "category": "Positional",
-            "solved": true,
-            "move": "a2a4",
-            "solve_ms": 1.0,
-            "depth": 19
-          },
-          {
-            "id": "POS-05",
-            "category": "Positional",
-            "solved": true,
-            "move": "d1d8",
-            "solve_ms": 96.0,
-            "depth": 17
-          },
-          {
-            "id": "POS-06",
-            "category": "Positional",
-            "solved": false,
-            "move": "f3g5",
-            "solve_ms": null,
-            "depth": 22
-          }
-        ]
-      },
-      "Rust stockfish-rs": {
-        "solved": 22,
-        "total": 30,
-        "solve_rate_pct": 73.33,
-        "avg_solve_ms": 36.09,
-        "details": [
-          {
-            "id": "MAT-01",
-            "category": "Mate-in-N",
-            "solved": true,
-            "move": "e7e8",
-            "solve_ms": 1.0,
-            "depth": 45
-          },
-          {
-            "id": "MAT-02",
-            "category": "Mate-in-N",
-            "solved": true,
-            "move": "f8c5",
-            "solve_ms": 2.0,
-            "depth": 245
-          },
-          {
-            "id": "MAT-03",
-            "category": "Mate-in-N",
-            "solved": true,
-            "move": "f2f8",
-            "solve_ms": 1.0,
-            "depth": 245
-          },
-          {
-            "id": "MAT-04",
-            "category": "Mate-in-N",
-            "solved": true,
-            "move": "c4b5",
-            "solve_ms": 4.0,
-            "depth": 245
-          },
-          {
-            "id": "MAT-05",
-            "category": "Mate-in-N",
-            "solved": true,
-            "move": "f6g4",
-            "solve_ms": 491.0,
-            "depth": 16
-          },
-          {
-            "id": "MAT-06",
-            "category": "Mate-in-N",
-            "solved": false,
-            "move": "c3e1",
-            "solve_ms": null,
-            "depth": 18
-          },
-          {
-            "id": "MAT-07",
-            "category": "Mate-in-N",
-            "solved": true,
-            "move": "b1g6",
-            "solve_ms": 1.0,
-            "depth": 245
-          },
-          {
-            "id": "MAT-08",
-            "category": "Mate-in-N",
-            "solved": false,
-            "move": "e1g1",
-            "solve_ms": null,
-            "depth": 18
-          },
-          {
-            "id": "WAC-001",
-            "category": "Tactical",
-            "solved": true,
-            "move": "g3g6",
-            "solve_ms": 1.0,
-            "depth": 245
-          },
-          {
-            "id": "WAC-002",
-            "category": "Tactical",
-            "solved": false,
-            "move": "b3b7",
-            "solve_ms": null,
-            "depth": 17
-          },
-          {
-            "id": "WAC-003",
-            "category": "Tactical",
-            "solved": true,
-            "move": "e3g3",
-            "solve_ms": 1.0,
-            "depth": 19
-          },
-          {
-            "id": "WAC-004",
-            "category": "Tactical",
-            "solved": true,
-            "move": "h6h7",
-            "solve_ms": 1.0,
-            "depth": 245
-          },
-          {
-            "id": "WAC-010",
-            "category": "Tactical",
-            "solved": true,
-            "move": "h4h7",
-            "solve_ms": 1.0,
-            "depth": 24
-          },
-          {
-            "id": "WAC-014",
-            "category": "Tactical",
-            "solved": true,
-            "move": "h3h7",
-            "solve_ms": 3.0,
-            "depth": 55
-          },
-          {
-            "id": "WAC-021",
-            "category": "Tactical",
-            "solved": true,
-            "move": "e7f6",
-            "solve_ms": 113.0,
-            "depth": 16
-          },
-          {
-            "id": "WAC-031",
-            "category": "Tactical",
-            "solved": true,
-            "move": "d3h7",
-            "solve_ms": 3.0,
-            "depth": 76
-          },
-          {
-            "id": "WAC-046",
-            "category": "Tactical",
-            "solved": false,
-            "move": "f4d3",
-            "solve_ms": null,
-            "depth": 20
-          },
-          {
-            "id": "WAC-100",
-            "category": "Tactical",
-            "solved": true,
-            "move": "e5f7",
-            "solve_ms": 1.0,
-            "depth": 47
-          },
-          {
-            "id": "ZUG-01",
-            "category": "Zugzwang",
-            "solved": true,
-            "move": "e1f1",
-            "solve_ms": 1.0,
-            "depth": 38
-          },
-          {
-            "id": "ZUG-02",
-            "category": "Zugzwang",
-            "solved": true,
-            "move": "a1b1",
-            "solve_ms": 37.0,
-            "depth": 48
-          },
-          {
-            "id": "ZUG-03",
-            "category": "Zugzwang",
-            "solved": true,
-            "move": "e1e2",
-            "solve_ms": 36.0,
-            "depth": 20
-          },
-          {
-            "id": "ZUG-04",
-            "category": "Zugzwang",
-            "solved": true,
-            "move": "f3g3",
-            "solve_ms": 1.0,
-            "depth": 39
-          },
-          {
-            "id": "ZUG-05",
-            "category": "Zugzwang",
-            "solved": false,
-            "move": "d6d8",
-            "solve_ms": null,
-            "depth": 18
-          },
-          {
-            "id": "ZUG-06",
-            "category": "Zugzwang",
-            "solved": false,
-            "move": "a4a5",
-            "solve_ms": null,
-            "depth": 28
-          },
-          {
-            "id": "POS-01",
-            "category": "Positional",
-            "solved": false,
-            "move": "e5e7",
-            "solve_ms": null,
-            "depth": 17
-          },
-          {
-            "id": "POS-02",
-            "category": "Positional",
-            "solved": true,
-            "move": "c3d5",
-            "solve_ms": 10.0,
-            "depth": 17
-          },
-          {
-            "id": "POS-03",
-            "category": "Positional",
-            "solved": true,
-            "move": "a4a5",
-            "solve_ms": 1.0,
-            "depth": 16
-          },
-          {
-            "id": "POS-04",
-            "category": "Positional",
-            "solved": true,
-            "move": "a2a4",
-            "solve_ms": 1.0,
-            "depth": 18
-          },
-          {
-            "id": "POS-05",
-            "category": "Positional",
-            "solved": true,
-            "move": "d1d8",
-            "solve_ms": 83.0,
-            "depth": 16
-          },
-          {
-            "id": "POS-06",
-            "category": "Positional",
-            "solved": false,
-            "move": "f3g5",
-            "solve_ms": null,
-            "depth": 21
-          }
-        ]
-      }
-    },
-    "2000": {
-      "C++ Stockfish": {
-        "solved": 24,
-        "total": 30,
-        "solve_rate_pct": 80.0,
-        "avg_solve_ms": 169.46,
-        "details": [
-          {
-            "id": "MAT-01",
-            "category": "Mate-in-N",
-            "solved": true,
-            "move": "e7e8",
-            "solve_ms": 1.0,
-            "depth": 65
-          },
-          {
-            "id": "MAT-02",
-            "category": "Mate-in-N",
-            "solved": true,
-            "move": "f8c5",
-            "solve_ms": 2.0,
-            "depth": 245
-          },
-          {
-            "id": "MAT-03",
-            "category": "Mate-in-N",
-            "solved": true,
-            "move": "f2f8",
-            "solve_ms": 1.0,
-            "depth": 245
-          },
-          {
-            "id": "MAT-04",
-            "category": "Mate-in-N",
-            "solved": true,
-            "move": "c4b5",
-            "solve_ms": 3.0,
-            "depth": 245
-          },
-          {
-            "id": "MAT-05",
-            "category": "Mate-in-N",
-            "solved": true,
-            "move": "f6g4",
-            "solve_ms": 703.0,
-            "depth": 19
-          },
-          {
-            "id": "MAT-06",
-            "category": "Mate-in-N",
-            "solved": false,
-            "move": "c3e1",
-            "solve_ms": null,
-            "depth": 22
-          },
-          {
-            "id": "MAT-07",
-            "category": "Mate-in-N",
-            "solved": true,
-            "move": "b1g6",
-            "solve_ms": 1.0,
-            "depth": 245
-          },
-          {
-            "id": "MAT-08",
-            "category": "Mate-in-N",
-            "solved": false,
-            "move": "e1g1",
-            "solve_ms": null,
-            "depth": 21
-          },
-          {
-            "id": "WAC-001",
-            "category": "Tactical",
-            "solved": true,
-            "move": "g3g6",
-            "solve_ms": 1.0,
-            "depth": 245
-          },
-          {
-            "id": "WAC-002",
-            "category": "Tactical",
-            "solved": true,
-            "move": "b3b2",
-            "solve_ms": 2000.0,
-            "depth": 27
-          },
-          {
-            "id": "WAC-003",
-            "category": "Tactical",
-            "solved": true,
-            "move": "e3g3",
-            "solve_ms": 1.0,
-            "depth": 25
-          },
-          {
-            "id": "WAC-004",
-            "category": "Tactical",
-            "solved": true,
-            "move": "h6h7",
-            "solve_ms": 1.0,
-            "depth": 245
-          },
-          {
-            "id": "WAC-010",
-            "category": "Tactical",
-            "solved": true,
-            "move": "h4h7",
-            "solve_ms": 1.0,
-            "depth": 28
-          },
-          {
-            "id": "WAC-014",
-            "category": "Tactical",
-            "solved": true,
-            "move": "h3h7",
-            "solve_ms": 3.0,
-            "depth": 122
-          },
-          {
-            "id": "WAC-021",
-            "category": "Tactical",
-            "solved": true,
-            "move": "e7f6",
-            "solve_ms": 88.0,
-            "depth": 20
-          },
-          {
-            "id": "WAC-031",
-            "category": "Tactical",
-            "solved": true,
-            "move": "d3h7",
-            "solve_ms": 2.0,
-            "depth": 245
-          },
-          {
-            "id": "WAC-046",
-            "category": "Tactical",
-            "solved": false,
-            "move": "f4d3",
-            "solve_ms": null,
-            "depth": 24
-          },
-          {
-            "id": "WAC-100",
-            "category": "Tactical",
-            "solved": true,
-            "move": "e5f7",
-            "solve_ms": 1.0,
-            "depth": 91
-          },
-          {
-            "id": "ZUG-01",
-            "category": "Zugzwang",
-            "solved": true,
-            "move": "e1f1",
-            "solve_ms": 1.0,
-            "depth": 62
-          },
-          {
-            "id": "ZUG-02",
-            "category": "Zugzwang",
-            "solved": true,
-            "move": "a1b1",
-            "solve_ms": 30.0,
-            "depth": 52
-          },
-          {
-            "id": "ZUG-03",
-            "category": "Zugzwang",
-            "solved": true,
-            "move": "e1e2",
-            "solve_ms": 36.0,
-            "depth": 28
-          },
-          {
-            "id": "ZUG-04",
-            "category": "Zugzwang",
-            "solved": true,
-            "move": "f3g3",
-            "solve_ms": 2.0,
-            "depth": 51
-          },
-          {
-            "id": "ZUG-05",
-            "category": "Zugzwang",
-            "solved": false,
-            "move": "d6d8",
-            "solve_ms": null,
-            "depth": 23
-          },
-          {
-            "id": "ZUG-06",
-            "category": "Zugzwang",
-            "solved": false,
-            "move": "a4a5",
-            "solve_ms": null,
-            "depth": 34
-          },
-          {
-            "id": "POS-01",
-            "category": "Positional",
-            "solved": true,
-            "move": "d6f6",
-            "solve_ms": 1096.0,
-            "depth": 27
-          },
-          {
-            "id": "POS-02",
-            "category": "Positional",
-            "solved": true,
-            "move": "c3d5",
-            "solve_ms": 9.0,
-            "depth": 20
-          },
-          {
-            "id": "POS-03",
-            "category": "Positional",
-            "solved": true,
-            "move": "a4a5",
-            "solve_ms": 1.0,
-            "depth": 19
-          },
-          {
-            "id": "POS-04",
-            "category": "Positional",
-            "solved": true,
-            "move": "a2a4",
-            "solve_ms": 1.0,
-            "depth": 25
-          },
-          {
-            "id": "POS-05",
-            "category": "Positional",
-            "solved": true,
-            "move": "d1d8",
-            "solve_ms": 82.0,
-            "depth": 20
-          },
-          {
-            "id": "POS-06",
-            "category": "Positional",
-            "solved": false,
-            "move": "f3g5",
-            "solve_ms": null,
-            "depth": 25
-          }
-        ]
-      },
-      "Rust stockfish-rs": {
         "solved": 23,
         "total": 30,
         "solve_rate_pct": 76.67,
-        "avg_solve_ms": 85.91,
+        "avg_solve_ms": 36.52,
         "details": [
           {
             "id": "MAT-01",
@@ -774,14 +28,14 @@
             "solved": true,
             "move": "e7e8",
             "solve_ms": 1.0,
-            "depth": 64
+            "depth": 54
           },
           {
             "id": "MAT-02",
             "category": "Mate-in-N",
             "solved": true,
             "move": "f8c5",
-            "solve_ms": 3.0,
+            "solve_ms": 2.0,
             "depth": 245
           },
           {
@@ -789,7 +43,7 @@
             "category": "Mate-in-N",
             "solved": true,
             "move": "f2f8",
-            "solve_ms": 2.0,
+            "solve_ms": 1.0,
             "depth": 245
           },
           {
@@ -797,7 +51,7 @@
             "category": "Mate-in-N",
             "solved": true,
             "move": "c4b5",
-            "solve_ms": 3.0,
+            "solve_ms": 2.0,
             "depth": 245
           },
           {
@@ -805,7 +59,7 @@
             "category": "Mate-in-N",
             "solved": true,
             "move": "f6g4",
-            "solve_ms": 477.0,
+            "solve_ms": 300.0,
             "depth": 18
           },
           {
@@ -846,7 +100,7 @@
             "solved": false,
             "move": "b3b7",
             "solve_ms": null,
-            "depth": 26
+            "depth": 27
           },
           {
             "id": "WAC-003",
@@ -854,7 +108,7 @@
             "solved": true,
             "move": "e3g3",
             "solve_ms": 1.0,
-            "depth": 24
+            "depth": 22
           },
           {
             "id": "WAC-004",
@@ -877,15 +131,15 @@
             "category": "Tactical",
             "solved": true,
             "move": "h3h7",
-            "solve_ms": 4.0,
-            "depth": 99
+            "solve_ms": 1.0,
+            "depth": 96
           },
           {
             "id": "WAC-021",
             "category": "Tactical",
             "solved": true,
             "move": "e7f6",
-            "solve_ms": 103.0,
+            "solve_ms": 39.0,
             "depth": 18
           },
           {
@@ -894,7 +148,7 @@
             "solved": true,
             "move": "d3h7",
             "solve_ms": 2.0,
-            "depth": 183
+            "depth": 193
           },
           {
             "id": "WAC-046",
@@ -910,7 +164,7 @@
             "solved": true,
             "move": "e5f7",
             "solve_ms": 1.0,
-            "depth": 75
+            "depth": 73
           },
           {
             "id": "ZUG-01",
@@ -918,14 +172,14 @@
             "solved": true,
             "move": "e1f1",
             "solve_ms": 1.0,
-            "depth": 60
+            "depth": 56
           },
           {
             "id": "ZUG-02",
             "category": "Zugzwang",
             "solved": true,
             "move": "a1b1",
-            "solve_ms": 37.0,
+            "solve_ms": 12.0,
             "depth": 51
           },
           {
@@ -933,16 +187,16 @@
             "category": "Zugzwang",
             "solved": true,
             "move": "e1e2",
-            "solve_ms": 37.0,
-            "depth": 26
+            "solve_ms": 13.0,
+            "depth": 25
           },
           {
             "id": "ZUG-04",
             "category": "Zugzwang",
             "solved": true,
             "move": "f3g3",
-            "solve_ms": 2.0,
-            "depth": 49
+            "solve_ms": 1.0,
+            "depth": 48
           },
           {
             "id": "ZUG-05",
@@ -965,7 +219,7 @@
             "category": "Positional",
             "solved": true,
             "move": "d6f6",
-            "solve_ms": 1201.0,
+            "solve_ms": 422.0,
             "depth": 26
           },
           {
@@ -973,8 +227,8 @@
             "category": "Positional",
             "solved": true,
             "move": "c3d5",
-            "solve_ms": 9.0,
-            "depth": 18
+            "solve_ms": 4.0,
+            "depth": 19
           },
           {
             "id": "POS-03",
@@ -990,15 +244,15 @@
             "solved": true,
             "move": "a2a4",
             "solve_ms": 1.0,
-            "depth": 24
+            "depth": 22
           },
           {
             "id": "POS-05",
             "category": "Positional",
             "solved": true,
             "move": "d1d8",
-            "solve_ms": 86.0,
-            "depth": 20
+            "solve_ms": 31.0,
+            "depth": 19
           },
           {
             "id": "POS-06",
@@ -1009,138 +263,884 @@
             "depth": 24
           }
         ]
+      },
+      "Rust rustfish": {
+        "solved": 23,
+        "total": 30,
+        "solve_rate_pct": 76.67,
+        "avg_solve_ms": 35.17,
+        "details": [
+          {
+            "id": "MAT-01",
+            "category": "Mate-in-N",
+            "solved": true,
+            "move": "e7e8",
+            "solve_ms": 1.0,
+            "depth": 53
+          },
+          {
+            "id": "MAT-02",
+            "category": "Mate-in-N",
+            "solved": true,
+            "move": "f8c5",
+            "solve_ms": 2.0,
+            "depth": 245
+          },
+          {
+            "id": "MAT-03",
+            "category": "Mate-in-N",
+            "solved": true,
+            "move": "f2f8",
+            "solve_ms": 1.0,
+            "depth": 245
+          },
+          {
+            "id": "MAT-04",
+            "category": "Mate-in-N",
+            "solved": true,
+            "move": "c4b5",
+            "solve_ms": 2.0,
+            "depth": 245
+          },
+          {
+            "id": "MAT-05",
+            "category": "Mate-in-N",
+            "solved": true,
+            "move": "f6g4",
+            "solve_ms": 281.0,
+            "depth": 17
+          },
+          {
+            "id": "MAT-06",
+            "category": "Mate-in-N",
+            "solved": false,
+            "move": "c3e1",
+            "solve_ms": null,
+            "depth": 20
+          },
+          {
+            "id": "MAT-07",
+            "category": "Mate-in-N",
+            "solved": true,
+            "move": "b1g6",
+            "solve_ms": 1.0,
+            "depth": 245
+          },
+          {
+            "id": "MAT-08",
+            "category": "Mate-in-N",
+            "solved": false,
+            "move": "e1g1",
+            "solve_ms": null,
+            "depth": 19
+          },
+          {
+            "id": "WAC-001",
+            "category": "Tactical",
+            "solved": true,
+            "move": "g3g6",
+            "solve_ms": 1.0,
+            "depth": 245
+          },
+          {
+            "id": "WAC-002",
+            "category": "Tactical",
+            "solved": false,
+            "move": "b3b7",
+            "solve_ms": null,
+            "depth": 26
+          },
+          {
+            "id": "WAC-003",
+            "category": "Tactical",
+            "solved": true,
+            "move": "e3g3",
+            "solve_ms": 1.0,
+            "depth": 21
+          },
+          {
+            "id": "WAC-004",
+            "category": "Tactical",
+            "solved": true,
+            "move": "h6h7",
+            "solve_ms": 1.0,
+            "depth": 245
+          },
+          {
+            "id": "WAC-010",
+            "category": "Tactical",
+            "solved": true,
+            "move": "h4h7",
+            "solve_ms": 1.0,
+            "depth": 26
+          },
+          {
+            "id": "WAC-014",
+            "category": "Tactical",
+            "solved": true,
+            "move": "h3h7",
+            "solve_ms": 2.0,
+            "depth": 94
+          },
+          {
+            "id": "WAC-021",
+            "category": "Tactical",
+            "solved": true,
+            "move": "e7f6",
+            "solve_ms": 41.0,
+            "depth": 17
+          },
+          {
+            "id": "WAC-031",
+            "category": "Tactical",
+            "solved": true,
+            "move": "d3h7",
+            "solve_ms": 1.0,
+            "depth": 188
+          },
+          {
+            "id": "WAC-046",
+            "category": "Tactical",
+            "solved": false,
+            "move": "f4d3",
+            "solve_ms": null,
+            "depth": 22
+          },
+          {
+            "id": "WAC-100",
+            "category": "Tactical",
+            "solved": true,
+            "move": "e5f7",
+            "solve_ms": 1.0,
+            "depth": 72
+          },
+          {
+            "id": "ZUG-01",
+            "category": "Zugzwang",
+            "solved": true,
+            "move": "e1f1",
+            "solve_ms": 1.0,
+            "depth": 55
+          },
+          {
+            "id": "ZUG-02",
+            "category": "Zugzwang",
+            "solved": true,
+            "move": "a1b1",
+            "solve_ms": 13.0,
+            "depth": 50
+          },
+          {
+            "id": "ZUG-03",
+            "category": "Zugzwang",
+            "solved": true,
+            "move": "e1e2",
+            "solve_ms": 12.0,
+            "depth": 24
+          },
+          {
+            "id": "ZUG-04",
+            "category": "Zugzwang",
+            "solved": true,
+            "move": "f3g3",
+            "solve_ms": 2.0,
+            "depth": 47
+          },
+          {
+            "id": "ZUG-05",
+            "category": "Zugzwang",
+            "solved": false,
+            "move": "d6d8",
+            "solve_ms": null,
+            "depth": 21
+          },
+          {
+            "id": "ZUG-06",
+            "category": "Zugzwang",
+            "solved": false,
+            "move": "a4a5",
+            "solve_ms": null,
+            "depth": 31
+          },
+          {
+            "id": "POS-01",
+            "category": "Positional",
+            "solved": true,
+            "move": "d6f6",
+            "solve_ms": 405.0,
+            "depth": 25
+          },
+          {
+            "id": "POS-02",
+            "category": "Positional",
+            "solved": true,
+            "move": "c3d5",
+            "solve_ms": 4.0,
+            "depth": 18
+          },
+          {
+            "id": "POS-03",
+            "category": "Positional",
+            "solved": true,
+            "move": "a4a5",
+            "solve_ms": 1.0,
+            "depth": 17
+          },
+          {
+            "id": "POS-04",
+            "category": "Positional",
+            "solved": true,
+            "move": "a2a4",
+            "solve_ms": 1.0,
+            "depth": 21
+          },
+          {
+            "id": "POS-05",
+            "category": "Positional",
+            "solved": true,
+            "move": "d1d8",
+            "solve_ms": 33.0,
+            "depth": 18
+          },
+          {
+            "id": "POS-06",
+            "category": "Positional",
+            "solved": false,
+            "move": "f3g5",
+            "solve_ms": null,
+            "depth": 23
+          }
+        ]
+      }
+    },
+    "2000": {
+      "C++ Stockfish": {
+        "solved": 22,
+        "total": 30,
+        "solve_rate_pct": 73.33,
+        "avg_solve_ms": 63.82,
+        "details": [
+          {
+            "id": "MAT-01",
+            "category": "Mate-in-N",
+            "solved": true,
+            "move": "e7e8",
+            "solve_ms": 1.0,
+            "depth": 80
+          },
+          {
+            "id": "MAT-02",
+            "category": "Mate-in-N",
+            "solved": true,
+            "move": "f8c5",
+            "solve_ms": 1.0,
+            "depth": 245
+          },
+          {
+            "id": "MAT-03",
+            "category": "Mate-in-N",
+            "solved": true,
+            "move": "f2f8",
+            "solve_ms": 1.0,
+            "depth": 245
+          },
+          {
+            "id": "MAT-04",
+            "category": "Mate-in-N",
+            "solved": true,
+            "move": "c4b5",
+            "solve_ms": 2.0,
+            "depth": 245
+          },
+          {
+            "id": "MAT-05",
+            "category": "Mate-in-N",
+            "solved": false,
+            "move": "e3e8",
+            "solve_ms": null,
+            "depth": 21
+          },
+          {
+            "id": "MAT-06",
+            "category": "Mate-in-N",
+            "solved": false,
+            "move": "c3e1",
+            "solve_ms": null,
+            "depth": 26
+          },
+          {
+            "id": "MAT-07",
+            "category": "Mate-in-N",
+            "solved": true,
+            "move": "b1g6",
+            "solve_ms": 1.0,
+            "depth": 245
+          },
+          {
+            "id": "MAT-08",
+            "category": "Mate-in-N",
+            "solved": false,
+            "move": "e1g1",
+            "solve_ms": null,
+            "depth": 27
+          },
+          {
+            "id": "WAC-001",
+            "category": "Tactical",
+            "solved": true,
+            "move": "g3g6",
+            "solve_ms": 1.0,
+            "depth": 245
+          },
+          {
+            "id": "WAC-002",
+            "category": "Tactical",
+            "solved": true,
+            "move": "b3b2",
+            "solve_ms": 880.0,
+            "depth": 33
+          },
+          {
+            "id": "WAC-003",
+            "category": "Tactical",
+            "solved": true,
+            "move": "e3g3",
+            "solve_ms": 1.0,
+            "depth": 29
+          },
+          {
+            "id": "WAC-004",
+            "category": "Tactical",
+            "solved": true,
+            "move": "h6h7",
+            "solve_ms": 1.0,
+            "depth": 245
+          },
+          {
+            "id": "WAC-010",
+            "category": "Tactical",
+            "solved": true,
+            "move": "h4h7",
+            "solve_ms": 1.0,
+            "depth": 31
+          },
+          {
+            "id": "WAC-014",
+            "category": "Tactical",
+            "solved": true,
+            "move": "h3h7",
+            "solve_ms": 2.0,
+            "depth": 245
+          },
+          {
+            "id": "WAC-021",
+            "category": "Tactical",
+            "solved": true,
+            "move": "e7f6",
+            "solve_ms": 40.0,
+            "depth": 21
+          },
+          {
+            "id": "WAC-031",
+            "category": "Tactical",
+            "solved": true,
+            "move": "d3h7",
+            "solve_ms": 1.0,
+            "depth": 245
+          },
+          {
+            "id": "WAC-046",
+            "category": "Tactical",
+            "solved": false,
+            "move": "f4d3",
+            "solve_ms": null,
+            "depth": 26
+          },
+          {
+            "id": "WAC-100",
+            "category": "Tactical",
+            "solved": true,
+            "move": "e5f7",
+            "solve_ms": 1.0,
+            "depth": 171
+          },
+          {
+            "id": "ZUG-01",
+            "category": "Zugzwang",
+            "solved": true,
+            "move": "e1f1",
+            "solve_ms": 1.0,
+            "depth": 76
+          },
+          {
+            "id": "ZUG-02",
+            "category": "Zugzwang",
+            "solved": true,
+            "move": "a1b1",
+            "solve_ms": 12.0,
+            "depth": 65
+          },
+          {
+            "id": "ZUG-03",
+            "category": "Zugzwang",
+            "solved": false,
+            "move": "f3e4",
+            "solve_ms": null,
+            "depth": 38
+          },
+          {
+            "id": "ZUG-04",
+            "category": "Zugzwang",
+            "solved": true,
+            "move": "f3g3",
+            "solve_ms": 1.0,
+            "depth": 56
+          },
+          {
+            "id": "ZUG-05",
+            "category": "Zugzwang",
+            "solved": false,
+            "move": "d6d8",
+            "solve_ms": null,
+            "depth": 26
+          },
+          {
+            "id": "ZUG-06",
+            "category": "Zugzwang",
+            "solved": false,
+            "move": "a4a5",
+            "solve_ms": null,
+            "depth": 52
+          },
+          {
+            "id": "POS-01",
+            "category": "Positional",
+            "solved": true,
+            "move": "d6f6",
+            "solve_ms": 419.0,
+            "depth": 31
+          },
+          {
+            "id": "POS-02",
+            "category": "Positional",
+            "solved": true,
+            "move": "c3d5",
+            "solve_ms": 4.0,
+            "depth": 22
+          },
+          {
+            "id": "POS-03",
+            "category": "Positional",
+            "solved": true,
+            "move": "a4a5",
+            "solve_ms": 1.0,
+            "depth": 24
+          },
+          {
+            "id": "POS-04",
+            "category": "Positional",
+            "solved": true,
+            "move": "a2a4",
+            "solve_ms": 1.0,
+            "depth": 28
+          },
+          {
+            "id": "POS-05",
+            "category": "Positional",
+            "solved": true,
+            "move": "d1d8",
+            "solve_ms": 31.0,
+            "depth": 23
+          },
+          {
+            "id": "POS-06",
+            "category": "Positional",
+            "solved": false,
+            "move": "f3g5",
+            "solve_ms": null,
+            "depth": 29
+          }
+        ]
+      },
+      "Rust rustfish": {
+        "solved": 22,
+        "total": 30,
+        "solve_rate_pct": 73.33,
+        "avg_solve_ms": 62.86,
+        "details": [
+          {
+            "id": "MAT-01",
+            "category": "Mate-in-N",
+            "solved": true,
+            "move": "e7e8",
+            "solve_ms": 1.0,
+            "depth": 79
+          },
+          {
+            "id": "MAT-02",
+            "category": "Mate-in-N",
+            "solved": true,
+            "move": "f8c5",
+            "solve_ms": 1.0,
+            "depth": 245
+          },
+          {
+            "id": "MAT-03",
+            "category": "Mate-in-N",
+            "solved": true,
+            "move": "f2f8",
+            "solve_ms": 1.0,
+            "depth": 245
+          },
+          {
+            "id": "MAT-04",
+            "category": "Mate-in-N",
+            "solved": true,
+            "move": "c4b5",
+            "solve_ms": 2.0,
+            "depth": 245
+          },
+          {
+            "id": "MAT-05",
+            "category": "Mate-in-N",
+            "solved": false,
+            "move": "e3e8",
+            "solve_ms": null,
+            "depth": 20
+          },
+          {
+            "id": "MAT-06",
+            "category": "Mate-in-N",
+            "solved": false,
+            "move": "c3e1",
+            "solve_ms": null,
+            "depth": 25
+          },
+          {
+            "id": "MAT-07",
+            "category": "Mate-in-N",
+            "solved": true,
+            "move": "b1g6",
+            "solve_ms": 1.0,
+            "depth": 245
+          },
+          {
+            "id": "MAT-08",
+            "category": "Mate-in-N",
+            "solved": false,
+            "move": "e1g1",
+            "solve_ms": null,
+            "depth": 26
+          },
+          {
+            "id": "WAC-001",
+            "category": "Tactical",
+            "solved": true,
+            "move": "g3g6",
+            "solve_ms": 1.0,
+            "depth": 245
+          },
+          {
+            "id": "WAC-002",
+            "category": "Tactical",
+            "solved": true,
+            "move": "b3b2",
+            "solve_ms": 868.0,
+            "depth": 32
+          },
+          {
+            "id": "WAC-003",
+            "category": "Tactical",
+            "solved": true,
+            "move": "e3g3",
+            "solve_ms": 1.0,
+            "depth": 28
+          },
+          {
+            "id": "WAC-004",
+            "category": "Tactical",
+            "solved": true,
+            "move": "h6h7",
+            "solve_ms": 1.0,
+            "depth": 245
+          },
+          {
+            "id": "WAC-010",
+            "category": "Tactical",
+            "solved": true,
+            "move": "h4h7",
+            "solve_ms": 1.0,
+            "depth": 30
+          },
+          {
+            "id": "WAC-014",
+            "category": "Tactical",
+            "solved": true,
+            "move": "h3h7",
+            "solve_ms": 1.0,
+            "depth": 245
+          },
+          {
+            "id": "WAC-021",
+            "category": "Tactical",
+            "solved": true,
+            "move": "e7f6",
+            "solve_ms": 39.0,
+            "depth": 20
+          },
+          {
+            "id": "WAC-031",
+            "category": "Tactical",
+            "solved": true,
+            "move": "d3h7",
+            "solve_ms": 1.0,
+            "depth": 245
+          },
+          {
+            "id": "WAC-046",
+            "category": "Tactical",
+            "solved": false,
+            "move": "f4d3",
+            "solve_ms": null,
+            "depth": 25
+          },
+          {
+            "id": "WAC-100",
+            "category": "Tactical",
+            "solved": true,
+            "move": "e5f7",
+            "solve_ms": 1.0,
+            "depth": 167
+          },
+          {
+            "id": "ZUG-01",
+            "category": "Zugzwang",
+            "solved": true,
+            "move": "e1f1",
+            "solve_ms": 1.0,
+            "depth": 75
+          },
+          {
+            "id": "ZUG-02",
+            "category": "Zugzwang",
+            "solved": true,
+            "move": "a1b1",
+            "solve_ms": 13.0,
+            "depth": 65
+          },
+          {
+            "id": "ZUG-03",
+            "category": "Zugzwang",
+            "solved": false,
+            "move": "f3e4",
+            "solve_ms": null,
+            "depth": 39
+          },
+          {
+            "id": "ZUG-04",
+            "category": "Zugzwang",
+            "solved": true,
+            "move": "f3g3",
+            "solve_ms": 1.0,
+            "depth": 55
+          },
+          {
+            "id": "ZUG-05",
+            "category": "Zugzwang",
+            "solved": false,
+            "move": "d6d8",
+            "solve_ms": null,
+            "depth": 25
+          },
+          {
+            "id": "ZUG-06",
+            "category": "Zugzwang",
+            "solved": false,
+            "move": "a4a5",
+            "solve_ms": null,
+            "depth": 51
+          },
+          {
+            "id": "POS-01",
+            "category": "Positional",
+            "solved": true,
+            "move": "d6f6",
+            "solve_ms": 411.0,
+            "depth": 31
+          },
+          {
+            "id": "POS-02",
+            "category": "Positional",
+            "solved": true,
+            "move": "c3d5",
+            "solve_ms": 4.0,
+            "depth": 21
+          },
+          {
+            "id": "POS-03",
+            "category": "Positional",
+            "solved": true,
+            "move": "a4a5",
+            "solve_ms": 1.0,
+            "depth": 23
+          },
+          {
+            "id": "POS-04",
+            "category": "Positional",
+            "solved": true,
+            "move": "a2a4",
+            "solve_ms": 1.0,
+            "depth": 27
+          },
+          {
+            "id": "POS-05",
+            "category": "Positional",
+            "solved": true,
+            "move": "d1d8",
+            "solve_ms": 31.0,
+            "depth": 22
+          },
+          {
+            "id": "POS-06",
+            "category": "Positional",
+            "solved": false,
+            "move": "f3g5",
+            "solve_ms": null,
+            "depth": 28
+          }
+        ]
       }
     }
   },
   "part1_nps": {
     "binary_size_mb": {
       "C++ Stockfish": 135.53,
-      "Rust stockfish-rs": 132.62
+      "Rust rustfish": 132.69
     },
     "depth_fixed": {
       "1": {
         "C++ Stockfish": {
           "total_nodes": 46951018,
-          "total_time_s": 109.591,
-          "nps": 428419
+          "total_time_s": 48.041,
+          "nps": 977315
         },
-        "Rust stockfish-rs": {
+        "Rust rustfish": {
           "total_nodes": 46951018,
-          "total_time_s": 78.637,
-          "nps": 597060
+          "total_time_s": 46.141,
+          "nps": 1017555
         }
       },
       "4": {
         "C++ Stockfish": {
-          "total_nodes": 194952689,
-          "total_time_s": 56.12,
-          "nps": 3473861
+          "total_nodes": 183637401,
+          "total_time_s": 45.352,
+          "nps": 4049164
         },
-        "Rust stockfish-rs": {
-          "total_nodes": 183262375,
-          "total_time_s": 50.856,
-          "nps": 3603552
+        "Rust rustfish": {
+          "total_nodes": 197802654,
+          "total_time_s": 49.092,
+          "nps": 4029216
         }
       },
       "8": {
         "C++ Stockfish": {
-          "total_nodes": 375223996,
-          "total_time_s": 55.102,
-          "nps": 6809682
+          "total_nodes": 393973134,
+          "total_time_s": 58.713,
+          "nps": 6710200
         },
-        "Rust stockfish-rs": {
-          "total_nodes": 351971284,
-          "total_time_s": 63.715,
-          "nps": 5524169
+        "Rust rustfish": {
+          "total_nodes": 436540695,
+          "total_time_s": 66.651,
+          "nps": 6549609
         }
       },
       "16": {
         "C++ Stockfish": {
-          "total_nodes": 1001254783,
-          "total_time_s": 112.788,
-          "nps": 8877301
+          "total_nodes": 855415952,
+          "total_time_s": 105.056,
+          "nps": 8142470
         },
-        "Rust stockfish-rs": {
-          "total_nodes": 876696848,
-          "total_time_s": 138.289,
-          "nps": 6339618
+        "Rust rustfish": {
+          "total_nodes": 760836419,
+          "total_time_s": 94.899,
+          "nps": 8017287
         }
       }
     },
     "time_fixed": {
       "1": {
         "C++ Stockfish": {
-          "total_nodes": 120479696,
-          "total_time_s": 99.216,
-          "nps": 1214317,
-          "avg_depth": 33.62
+          "total_nodes": 122781436,
+          "total_time_s": 99.177,
+          "nps": 1238003,
+          "avg_depth": 33.76
         },
-        "Rust stockfish-rs": {
-          "total_nodes": 98603425,
-          "total_time_s": 86.182,
-          "nps": 1144130,
-          "avg_depth": 32.2
+        "Rust rustfish": {
+          "total_nodes": 124811805,
+          "total_time_s": 99.205,
+          "nps": 1258120,
+          "avg_depth": 32.84
         }
       },
       "4": {
         "C++ Stockfish": {
-          "total_nodes": 493696234,
-          "total_time_s": 98.403,
-          "nps": 5017085,
-          "avg_depth": 35.06
+          "total_nodes": 509692022,
+          "total_time_s": 98.376,
+          "nps": 5181060,
+          "avg_depth": 35.4
         },
-        "Rust stockfish-rs": {
-          "total_nodes": 373068008,
-          "total_time_s": 83.63,
-          "nps": 4460935,
-          "avg_depth": 33.36
+        "Rust rustfish": {
+          "total_nodes": 503699764,
+          "total_time_s": 98.385,
+          "nps": 5119680,
+          "avg_depth": 34.86
         }
       },
       "8": {
         "C++ Stockfish": {
-          "total_nodes": 890092234,
-          "total_time_s": 98.23,
-          "nps": 9061307,
-          "avg_depth": 36.38
+          "total_nodes": 862553126,
+          "total_time_s": 98.235,
+          "nps": 8780507,
+          "avg_depth": 35.9
         },
-        "Rust stockfish-rs": {
-          "total_nodes": 649451540,
-          "total_time_s": 84.633,
-          "nps": 7673738,
-          "avg_depth": 34.52
+        "Rust rustfish": {
+          "total_nodes": 855006553,
+          "total_time_s": 98.236,
+          "nps": 8703596,
+          "avg_depth": 35.42
         }
       },
       "16": {
         "C++ Stockfish": {
-          "total_nodes": 1106047169,
-          "total_time_s": 98.282,
-          "nps": 11253812,
-          "avg_depth": 34.62
+          "total_nodes": 1123572625,
+          "total_time_s": 98.219,
+          "nps": 11439463,
+          "avg_depth": 35.06
         },
-        "Rust stockfish-rs": {
-          "total_nodes": 708518377,
-          "total_time_s": 74.054,
-          "nps": 9567590,
-          "avg_depth": 31.7
+        "Rust rustfish": {
+          "total_nodes": 1108761811,
+          "total_time_s": 98.241,
+          "nps": 11286141,
+          "avg_depth": 35.56
         }
       }
     },
     "peak_rss_mb": {
       "1": {
         "C++ Stockfish": 433.62,
-        "Rust stockfish-rs": 442.28
+        "Rust rustfish": 427.15
       },
       "4": {
-        "C++ Stockfish": 501.05,
-        "Rust stockfish-rs": 508.79
+        "C++ Stockfish": 501.01,
+        "Rust rustfish": 495.16
       },
       "8": {
-        "C++ Stockfish": 590.62,
-        "Rust stockfish-rs": 597.11
+        "C++ Stockfish": 590.27,
+        "Rust rustfish": 585.33
       },
       "16": {
-        "C++ Stockfish": 769.64,
-        "Rust stockfish-rs": 774.01
+        "C++ Stockfish": 769.09,
+        "Rust rustfish": 765.6
       }
     }
   }

@@ -1,6 +1,6 @@
 use crate::position::Position;
 use crate::types::*;
-use super::super::common::{IndexType, ORIENT_TBL};
+use super::super::common::{IndexType, ORIENT_TBL_DATA};
 
 pub const HASH_VALUE: u32 = 0xAB005CEF;
 pub const NUM_BLOCKS: usize = 3;
@@ -48,14 +48,14 @@ const KING_BUCKETS: [u16; SQUARE_NB] = [
     b( 0), b( 1), b( 2), b( 3), b( 3), b( 2), b( 1), b( 0),
 ];
 
-const OFFSETS: [[u16; PIECE_NB]; COLOR_NB * SQUARE_NB] = {
+static OFFSETS: [[u16; PIECE_NB]; COLOR_NB * SQUARE_NB] = {
     let mut table = [[0u16; PIECE_NB]; COLOR_NB * SQUARE_NB];
     let mut c = 0;
     while c < COLOR_NB {
         let mut sq = 0;
         while sq < SQUARE_NB {
             let flip = (56 * c) as u16;
-            let orient = (ORIENT_TBL[sq] as u16) ^ flip;
+            let orient = (ORIENT_TBL_DATA[sq] as u16) ^ flip;
             let king_bucket = KING_BUCKETS[sq ^ (flip as usize)];
             let mut piece_index = 0;
             while piece_index < PIECE_NB {

@@ -113,7 +113,7 @@ pub const fn pseudo_attacks(pt: PieceType, sq: Square) -> Bitboard {
     }
 }
 
-pub const PSEUDO_ATTACKS: [[Bitboard; SQUARE_NB]; PIECE_TYPE_NB] = {
+pub const PSEUDO_ATTACKS_DATA: [[Bitboard; SQUARE_NB]; PIECE_TYPE_NB] = {
     let mut attacks = [[0u64; SQUARE_NB]; PIECE_TYPE_NB];
     let mut s1 = 0;
     while s1 < 64 {
@@ -132,7 +132,9 @@ pub const PSEUDO_ATTACKS: [[Bitboard; SQUARE_NB]; PIECE_TYPE_NB] = {
     attacks
 };
 
-pub const RANK_ATTACKS: [[u8; 64]; FILE_NB] = {
+pub static PSEUDO_ATTACKS: [[Bitboard; SQUARE_NB]; PIECE_TYPE_NB] = PSEUDO_ATTACKS_DATA;
+
+pub static RANK_ATTACKS: [[u8; 64]; FILE_NB] = {
     let mut table = [[0u8; 64]; FILE_NB];
     let mut file = 0;
     while file < 8 {
@@ -161,7 +163,7 @@ pub struct DualMagic {
     pub file: u8,
 }
 
-pub const DUAL_MAGICS: [DualMagic; SQUARE_NB] = {
+pub static DUAL_MAGICS: [DualMagic; SQUARE_NB] = {
     let mut magics = [DualMagic {
         mask_file: 0,
         mask_diag: 0,
@@ -189,7 +191,7 @@ pub const DUAL_MAGICS: [DualMagic; SQUARE_NB] = {
     magics
 };
 
-pub const LINE_BB: [[Bitboard; SQUARE_NB]; SQUARE_NB] = {
+pub static LINE_BB: [[Bitboard; SQUARE_NB]; SQUARE_NB] = {
     let mut line = [[0u64; SQUARE_NB]; SQUARE_NB];
     let mut s1 = 0;
     while s1 < 64 {
@@ -217,7 +219,7 @@ pub const LINE_BB: [[Bitboard; SQUARE_NB]; SQUARE_NB] = {
     line
 };
 
-pub const BETWEEN_BB: [[Bitboard; SQUARE_NB]; SQUARE_NB] = {
+pub static BETWEEN_BB: [[Bitboard; SQUARE_NB]; SQUARE_NB] = {
     let mut between = [[0u64; SQUARE_NB]; SQUARE_NB];
     let mut s1 = 0;
     while s1 < 64 {
@@ -242,7 +244,7 @@ pub const BETWEEN_BB: [[Bitboard; SQUARE_NB]; SQUARE_NB] = {
     between
 };
 
-pub const INVERSE_RAY_PASS_BB: [[Bitboard; SQUARE_NB]; SQUARE_NB] = {
+pub static INVERSE_RAY_PASS_BB: [[Bitboard; SQUARE_NB]; SQUARE_NB] = {
     let mut inv_ray = [[0u64; SQUARE_NB]; SQUARE_NB];
     let mut s1 = 0;
     while s1 < 64 {
@@ -266,7 +268,7 @@ pub const INVERSE_RAY_PASS_BB: [[Bitboard; SQUARE_NB]; SQUARE_NB] = {
     inv_ray
 };
 
-pub const DIAG_BB: [Bitboard; SQUARE_NB] = {
+pub static DIAG_BB: [Bitboard; SQUARE_NB] = {
     let mut diag = [0u64; SQUARE_NB];
     let mut s = 0;
     while s < 64 {
@@ -277,7 +279,7 @@ pub const DIAG_BB: [Bitboard; SQUARE_NB] = {
     diag
 };
 
-pub const ANTI_DIAG_BB: [Bitboard; SQUARE_NB] = {
+pub static ANTI_DIAG_BB: [Bitboard; SQUARE_NB] = {
     let mut antidiag = [0u64; SQUARE_NB];
     let mut s = 0;
     while s < 64 {
@@ -289,32 +291,32 @@ pub const ANTI_DIAG_BB: [Bitboard; SQUARE_NB] = {
 };
 
 #[inline(always)]
-pub const fn line_bb(s1: Square, s2: Square) -> Bitboard {
+pub fn line_bb(s1: Square, s2: Square) -> Bitboard {
     LINE_BB[s1.idx()][s2.idx()]
 }
 
 #[inline(always)]
-pub const fn between_bb(s1: Square, s2: Square) -> Bitboard {
+pub fn between_bb(s1: Square, s2: Square) -> Bitboard {
     BETWEEN_BB[s1.idx()][s2.idx()]
 }
 
 #[inline(always)]
-pub const fn ray_pass_bb(s1: Square, s2: Square) -> Bitboard {
+pub fn ray_pass_bb(s1: Square, s2: Square) -> Bitboard {
     INVERSE_RAY_PASS_BB[s2.idx()][s1.idx()]
 }
 
 #[inline(always)]
-pub const fn diag_bb(s: Square) -> Bitboard {
+pub fn diag_bb(s: Square) -> Bitboard {
     DIAG_BB[s.idx()]
 }
 
 #[inline(always)]
-pub const fn antidiag_bb(s: Square) -> Bitboard {
+pub fn antidiag_bb(s: Square) -> Bitboard {
     ANTI_DIAG_BB[s.idx()]
 }
 
 #[inline(always)]
-pub const fn attacks_bb_empty(pt: PieceType, s: Square, c: Color) -> Bitboard {
+pub fn attacks_bb_empty(pt: PieceType, s: Square, c: Color) -> Bitboard {
     if (pt as u8) == (PieceType::Pawn as u8) {
         PSEUDO_ATTACKS[c as usize][s.idx()]
     } else {

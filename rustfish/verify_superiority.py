@@ -20,7 +20,7 @@ import chess
 import chess.engine
 import psutil
 
-CPP_BIN = r"D:\Coding\cltest\Stockfish\src\stockfish.exe"
+CPP_BIN = r"D:\Coding\cltest\tools\Stockfish\src\stockfish.exe"
 RUST_BIN = r"D:\Coding\cltest\rustfish\target\x86_64-pc-windows-msvc\release\rustfish.exe"
 BOOK_PGN = r"D:\Coding\cltest\tools\8moves_v3.pgn"
 OUT_DIR = Path(r"D:\Coding\cltest\rustfish")

@@ -81,7 +81,7 @@ pub const fn pawn_single_push_bb(c: Color, b: Bitboard) -> Bitboard {
     }
 }
 
-const PAWN_PAIR_BB: [Bitboard; SQUARE_NB] = {
+static PAWN_PAIR_BB: [Bitboard; SQUARE_NB] = {
     let mut result = [0u64; SQUARE_NB];
     let mut sq = 0;
     while sq < 64 {
@@ -97,7 +97,7 @@ const PAWN_PAIR_BB: [Bitboard; SQUARE_NB] = {
 };
 
 #[inline(always)]
-pub const fn pawn_pair_bb(s: Square) -> Bitboard {
+pub fn pawn_pair_bb(s: Square) -> Bitboard {
     PAWN_PAIR_BB[s.idx()]
 }
 

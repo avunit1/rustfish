@@ -63,11 +63,11 @@ pub static THREAT_LUTS: ThreatLUTs = {
             let mut to = 0;
             while to < SQUARE_NB {
                 let attacks = if (pt as u8) != (PieceType::Pawn as u8) {
-                    PSEUDO_ATTACKS[pt as usize][from]
+                    PSEUDO_ATTACKS_DATA[pt as usize][from]
                 } else if to < from {
-                    PSEUDO_ATTACKS[Color::Black as usize][from]
+                    PSEUDO_ATTACKS_DATA[Color::Black as usize][from]
                 } else {
-                    PSEUDO_ATTACKS[Color::White as usize][from]
+                    PSEUDO_ATTACKS_DATA[Color::White as usize][from]
                 };
                 let mask = (1u64 << to).wrapping_sub(1) & attacks;
                 tables.lut2[pt as usize][from][to] = offset + mask.count_ones() as u16;
@@ -75,9 +75,9 @@ pub static THREAT_LUTS: ThreatLUTs = {
             }
 
             if (pt as u8) != (PieceType::Pawn as u8) {
-                offset += PSEUDO_ATTACKS[pt as usize][from].count_ones() as u16;
+                offset += PSEUDO_ATTACKS_DATA[pt as usize][from].count_ones() as u16;
             } else if from >= Square::SqA2 as usize && from <= Square::SqH7 as usize {
-                offset += PSEUDO_ATTACKS[Color::White as usize][from].count_ones() as u16;
+                offset += PSEUDO_ATTACKS_DATA[Color::White as usize][from].count_ones() as u16;
             }
             from += 1;
         }
@@ -141,7 +141,7 @@ impl FullThreats {
         attacked: Piece,
         ksq: Square,
     ) -> IndexType {
-        let orientation = unsafe { *ORIENT_TBL.get_unchecked(ksq as usize) } ^ (56 * (perspective as u8));
+        let orientation = ORIENT_TBL[ksq.idx()] ^ (56 * (perspective as u8));
         let from_oriented = (from as u8 ^ orientation) as usize;
         let to_oriented = (to as u8 ^ orientation) as usize;
 
@@ -231,7 +231,7 @@ impl FullThreats {
         added: &mut ValueList<u16, 256>,
         prefetch_base: *const i8,
     ) {
-        let orient = ORIENT_TBL[ksq as usize] ^ (56 * (perspective as u8));
+        let orient = ORIENT_TBL[ksq.idx()] ^ (56 * (perspective as u8));
         let pair_swap = 0x88 * (perspective as usize);
         let len = diff.list.len();
 
@@ -279,8 +279,8 @@ impl FullThreats {
         black_added: &mut ValueList<u16, 256>,
         prefetch_base: *const i8,
     ) {
-        let w_orient = ORIENT_TBL[white_ksq as usize];
-        let b_orient = ORIENT_TBL[black_ksq as usize] ^ 56;
+        let w_orient = ORIENT_TBL[white_ksq.idx()];
+        let b_orient = ORIENT_TBL[black_ksq.idx()] ^ 56;
         let len = diff.list.len();
 
         unsafe {

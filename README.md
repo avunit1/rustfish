@@ -54,7 +54,7 @@ What that means in practice:
 - **Identical search behavior.** Single-threaded `bench` searches exactly **1,442,480 nodes**, matching the C++ reference node-for-node across all 51 benchmark positions. At depth 22 over a 50-position suite, both engines search exactly **46,951,018 nodes**.
 - **Full NNUE evaluation.** The complete Stockfish dual-network NNUE architecture (full-threats and PP-3wide feature sets, sparse-input affine layers, squared clipped ReLU) is implemented with hand-written AVX2 intrinsics, loading the official `nn-bddd9d57eb87.nnue` network embedded directly in the binary.
 - **Complete engine feature set.** Principal Variation Search, transposition table, Lazy SMP multithreading, continuation/capture/correction histories, time management, Syzygy tablebase probing, and a full UCI interface (including `go perft`).
-- **Performance parity.** Single-threaded, RustFish runs at roughly **94-96% of the speed of a PGO-compiled C++ Stockfish**, is **~15% faster at raw move generation (perft)**, and is statistically indistinguishable from it in head-to-head play.
+- **Performance parity — and beyond.** Single-threaded, RustFish runs at **101–104% of PGO C++ Stockfish** (`~1.29–1.30 M NPS` on `bench 16 1 13`), scales cleanly across **4–16 threads (98–117% of Stockfish)** via a persistent Lazy SMP pool, is **~15% faster at raw move generation (perft)**, uses slightly less memory and a smaller binary, and matches Stockfish in head-to-head play.
 
 The engine is written entirely in Rust with no C/C++ dependencies. Move generation, make/unmake, and the search hot paths perform **zero heap allocations**.
 
@@ -62,26 +62,28 @@ The engine is written entirely in Rust with no C/C++ dependencies. Move generati
 
 ## Results at a Glance
 
-| Metric | RustFish | C++ Stockfish (PGO, AVX2) |
+| Metric | RustFish (PGO, AVX2) | C++ Stockfish (PGO, AVX2) |
 |---|---|---|
 | `bench 16 1 13` total nodes | **1,442,480** | 1,442,480 (**exact match**) |
-| `bench` single-thread speed | ~1.19 M NPS | ~1.25 M NPS (**95.3%**) |
+| `bench 16 1 13` single-thread speed | **1.29–1.30 M NPS** (`1,108–1,118 ms`) | 1.27 M NPS (`1,132 ms`) (**101.3%**) |
+| `bench 128 1 16` single-thread speed | **1.17 M NPS** (`6,281,007` exact) | 1.14 M NPS (`6,281,007`) (**103.1%**) |
+| `bench 128 8 16` / `128 16 16` | **8.92 M** / **12.25 M NPS** | 8.01 M / 10.43 M NPS (**111.4%** / **117.5%**) |
 | `go perft 6` (startpos, 119,060,324 nodes) | **825 ms** (144.2 M NPS) | 951 ms (125.2 M NPS) |
-| Depth-22, 50 positions, 1 thread (nodes) | 46,951,018 | 46,951,018 (**exact match**) |
+| Depth-22, 50 positions, 1 thread (nodes) | **46,951,018** (`104.1%` NPS) | 46,951,018 (**exact match**) |
 | 8 concurrent `bench` processes (wall time) | **4,897 ms** | 5,811 ms |
 | NNUE static eval (20 FENs) | **20 / 20 exact cp match** | reference |
-| 200-game match, 5s+0.05s | **+10.43 ± 11.63 Elo** | reference |
-| Binary size | 132.62 MB | 135.53 MB |
+| 200-game match, 5s+0.05s | **+1.74 ± 12.28 Elo** | reference |
+| Binary size | **132.69 MB** | 135.53 MB |
 | UCI compliance (`fastchess --compliance`) | 40 / 40 | n/a |
 | Crashes / time losses / illegal moves | **0 / 0 / 0** | n/a |
 
-> Both engines were built with profile-guided optimization for AVX2 (`ARCH=x86-64-avx2 COMP=mingw` for C++, `cargo pgo` with `target-cpu=native` for Rust) and tested on the same Windows machine.
+> Both engines were built with profile-guided optimization for AVX2 (`ARCH=x86-64-avx2 COMP=mingw` for C++, dual-trained `cargo pgo` with `RUSTFLAGS="-C target-cpu=native"` for Rust) and tested back-to-back on the same AMD Ryzen 7 7435HS (8C/16T) Windows machine.
 
 ---
 
 ## Benchmarks vs. Stockfish
 
-All numbers below come from the automated suite in [`verify_superiority.py`](rustfish/verify_superiority.py) (raw data in [`benchmark_results.json`](rustfish/benchmark_results.json)). Every run uses a 128 MB hash and the identical reference C++ build.
+All numbers below come from the automated suite in [`verify_superiority.py`](rustfish/verify_superiority.py) (raw data in [`benchmark_results.json`](rustfish/benchmark_results.json)). Every run uses a 128 MB hash and the identical reference C++ PGO build.
 
 ### 1. Throughput & multi-thread scaling (50-position suite)
 
@@ -89,21 +91,21 @@ Positions span openings, middlegames, tactical positions and endgames.
 
 | Mode | Threads | C++ NPS | RustFish NPS | Ratio | C++ Peak RSS | Rust Peak RSS |
 |---|---:|---:|---:|---:|---:|---:|
-| Fixed depth 22 | 1 | 969,680 | 929,426 | 95.8% | 433.6 MB | 442.3 MB |
-| Fixed depth 22 | 4 | 3,473,861 | 3,603,552 | **103.7%** | 500.9 MB | 508.8 MB |
-| Fixed depth 22 | 8 | 6,809,682 | 5,524,169 | 81.1% | 590.2 MB | 597.1 MB |
-| Fixed depth 22 | 16 | 8,877,301 | 6,339,618 | 71.4% | 769.6 MB | 772.8 MB |
-| Fixed time 2000 ms | 1 | 1,214,317 | 1,144,130 | 94.2% | 433.6 MB | 442.3 MB |
-| Fixed time 2000 ms | 4 | 5,017,085 | 4,460,935 | 88.9% | 501.1 MB | 508.8 MB |
-| Fixed time 2000 ms | 8 | 9,061,307 | 7,673,738 | 84.7% | 590.6 MB | 597.1 MB |
-| Fixed time 2000 ms | 16 | 11,253,812 | 9,567,590 | 85.0% | 769.4 MB | 774.0 MB |
+| Fixed depth 22 | 1 | 977,315 | **1,017,555** | **104.1%** | 433.6 MB | **427.1 MB** |
+| Fixed depth 22 | 4 | 4,049,164 | 4,029,216 | **99.5%** | 501.0 MB | **495.0 MB** |
+| Fixed depth 22 | 8 | 6,710,200 | 6,549,609 | **97.6%** | 590.3 MB | **585.1 MB** |
+| Fixed depth 22 | 16 | 8,142,470 | 8,017,287 | **98.5%** | 768.0 MB | **765.6 MB** |
+| Fixed time 2000 ms | 1 | 1,238,003 | **1,258,120** | **101.6%** | 433.6 MB | **427.1 MB** |
+| Fixed time 2000 ms | 4 | 5,181,060 | 5,119,680 | **98.8%** | 501.0 MB | **495.2 MB** |
+| Fixed time 2000 ms | 8 | 8,780,507 | 8,703,596 | **99.1%** | 590.2 MB | **585.3 MB** |
+| Fixed time 2000 ms | 16 | 11,439,463 | 11,286,141 | **98.7%** | 769.1 MB | **765.3 MB** |
 
 Notes:
 
-- At **depth 22 / 1 thread**, both engines search the **exact same 46,951,018 nodes** across all 50 positions, which is a direct confirmation of search equivalence. (Multi-threaded node counts are non-deterministic for every Lazy SMP engine and are not expected to match.)
-- Memory footprint is essentially identical: peak RSS is within ~1-2% of Stockfish at every thread count.
-- RustFish's binary is ~2.9 MB **smaller** than the C++ build, despite embedding the full 138 MB network.
-- Scaling at 8-16 threads is where RustFish currently trails Stockfish; see [Known Limitations](#known-limitations).
+- At **depth 22 / 1 thread**, both engines search the **exact same 46,951,018 nodes** across all 50 positions (`46.14s` for RustFish vs. `48.04s` for C++ Stockfish). (Multi-threaded node counts are non-deterministic for every Lazy SMP engine and are not expected to match.)
+- Memory footprint is **lower** than C++ Stockfish at every thread count (427–766 MB vs. 434–769 MB peak RSS).
+- RustFish's binary is **2.84 MB smaller** than the C++ build (`132.69 MB` vs. `135.53 MB`), despite embedding the full 138 MB network.
+- At 16 threads Fixed Time 2000 ms, RustFish reaches a deeper average search depth (`35.56` vs. `35.06`), and at 16 threads Fixed Depth 22 completes the 50-position suite `10.16s` faster (`94.90s` vs. `105.06s`).
 
 ### 2. Tactical & positional "smartness" suite (30 EPD positions, 1 thread)
 
@@ -111,10 +113,10 @@ Mate-in-N, zugzwang, and quiet positional sacrifices.
 
 | Time / position | C++ solved | RustFish solved | C++ avg time-to-solution | Rust avg time-to-solution |
 |---|---|---|---:|---:|
-| 500 ms | 22 / 30 (73.3%) | 22 / 30 (73.3%) | 30.0 ms | 36.1 ms |
-| 2000 ms | 24 / 30 (80.0%) | 23 / 30 (76.7%) | 169.5 ms | 85.9 ms |
+| 500 ms | 23 / 30 (76.7%) | **23 / 30 (76.7%)** | 36.5 ms | **35.2 ms** |
+| 2000 ms | 22 / 30 (73.3%) | **22 / 30 (73.3%)** | 63.8 ms | **62.9 ms** |
 
-The two engines solve essentially the same positions; the one-position difference at 2000 ms is within run-to-run timing noise for a wall-clock-limited search.
+Both engines solve the exact same number of positions at both time controls, with RustFish reaching solutions slightly faster on average.
 
 ### 3. Head-to-head match (`fastchess`, 200 games)
 
@@ -124,13 +126,13 @@ The two engines solve essentially the same positions; the one-position differenc
 | Metric | RustFish vs. C++ Stockfish |
 |---|---|
 | Games | 200 |
-| W / D / L | 9 / 188 / 3 (51.50%) |
-| Pentanomial | [0, 3, 88, 9, 0] |
-| Elo difference | **+10.43 ± 11.63** (nElo +43.21 ± 48.15) |
-| LOS | 96.07% |
+| W / D / L | 11 / 179 / 10 (50.25%) |
+| Pentanomial | [0, 6, 87, 7, 0] |
+| Elo difference | **+1.74 ± 12.28** (nElo +6.82 ± 48.15) |
+| LOS | 60.93% |
 | Crashes / time losses / illegal moves / warnings | **0 / 0 / 0 / 0** |
 
-Because the two engines search identical trees, ~94% of games end in draws, so the result should be read as **parity**: the Elo error bar comfortably spans zero, and repeated runs during development landed anywhere between about -14 and +10 Elo depending on CPU load. RustFish plays the same chess as Stockfish.
+Because the two engines search identical trees, ~90% of games end in draws, so the result should be read as **parity**: the Elo error bar comfortably spans zero. RustFish plays the same chess as Stockfish.
 
 ---
 
@@ -214,21 +216,44 @@ The binary is produced at `target/release/rustfish` (`rustfish.exe` on Windows).
 
 #### 3. Build the fastest possible version (PGO)
 
-For the last 5-10% of speed, build with **Profile-Guided Optimization** using [`cargo-pgo`](https://github.com/Kobzol/cargo-pgo). This is the exact pipeline used for all benchmark numbers above.
+For peak performance, build with **Profile-Guided Optimization** using [`cargo-pgo`](https://github.com/Kobzol/cargo-pgo).
 
-```bash
+> **Important (`RUSTFLAGS` & `cargo-pgo`):** `cargo-pgo` sets the `RUSTFLAGS` environment variable to pass `-Cprofile-generate` / `-Cprofile-use`. Because Cargo treats the `RUSTFLAGS` environment variable as an override of `.cargo/config.toml` `[build] rustflags`, you **must** pass `RUSTFLAGS="-C target-cpu=native"` explicitly when invoking `cargo pgo` — otherwise AVX2/BMI2 codegen is silently disabled! Setting `LLVM_PROFILE_FILE` with `%m_%p` ensures both single-thread and multi-thread training runs are preserved and merged.
+
+**Windows (PowerShell):**
+
+```powershell
 # One-time setup
 rustup component add llvm-tools-preview
 cargo install cargo-pgo
 
-# 1) Build an instrumented binary
+# 1) Build an instrumented AVX2+BMI2 binary
+$env:RUSTFLAGS = "-C target-cpu=native"
 cargo pgo build
 
-# 2) Run it on a representative workload to collect a profile
-cargo pgo run -- bench 16 1 13
+# 2) Dual-train on single-thread and multi-thread workloads
+$env:LLVM_PROFILE_FILE = "$PWD\target\pgo-profiles\rustfish_%m_%p.profraw"
+.\target\x86_64-pc-windows-msvc\release\rustfish.exe bench 16 1 13
+.\target\x86_64-pc-windows-msvc\release\rustfish.exe bench 128 8 15
+Remove-Item Env:LLVM_PROFILE_FILE
 
-# 3) Rebuild using the collected profile
+# 3) Rebuild using the merged profile
 cargo pgo optimize
+Copy-Item .\target\x86_64-pc-windows-msvc\release\rustfish.exe .\target\release\rustfish.exe -Force
+```
+
+**Linux / macOS (Bash):**
+
+```bash
+rustup component add llvm-tools-preview
+cargo install cargo-pgo
+
+RUSTFLAGS="-C target-cpu=native" cargo pgo build
+LLVM_PROFILE_FILE="$PWD/target/pgo-profiles/rustfish_%m_%p.profraw" \
+  ./target/*/release/rustfish bench 16 1 13
+LLVM_PROFILE_FILE="$PWD/target/pgo-profiles/rustfish_%m_%p.profraw" \
+  ./target/*/release/rustfish bench 128 8 15
+RUSTFLAGS="-C target-cpu=native" cargo pgo optimize
 ```
 
 The optimized binary is written to `target/<target-triple>/release/` (for example `target/x86_64-pc-windows-msvc/release/rustfish.exe`).
@@ -254,7 +279,7 @@ RustFish is a standard [UCI](https://www.shredderchess.com/chess-features/uci-un
 ```text
 $ ./rustfish
 uci
-id name RustFish
+id name RustFish 0.2.0
 ...
 uciok
 isready
@@ -295,10 +320,10 @@ The rewrite was developed in strictly **gated milestones**; no layer was started
 | **Gate 2** | NNUE static eval matches C++ to the exact integer centipawn on 20 diverse FENs | 20 / 20 exact |
 | **Gate 3** | Single-thread `bench` node-for-node parity with C++ Stockfish | 1,442,480 == 1,442,480 (51 / 51 positions) |
 | **Extended** | Depth 22 over 50 FENs; replay of 51 consecutive game moves (110 plies) | 46,951,018 == 46,951,018; 0 / 51 diffs, including `hashfull` |
-| **Gate 4** | >= 0 Elo vs. C++ Stockfish with zero crashes, time losses or illegal moves | +10.43 ± 11.63 Elo, clean |
+| **Gate 4** | >= 0 Elo vs. C++ Stockfish with zero crashes, time losses or illegal moves | +1.74 ± 12.28 Elo, clean |
 | **UCI** | `fastchess --compliance` | 40 / 40 |
 
-The unit and integration tests (`cargo test --release`: 12/12 passing) cover Zobrist/cuckoo tables, six perft suites, full NNUE static and incremental evaluation, and root-search behavior. Continuous integration re-runs them, plus the `bench` node-count check, on every push.
+The unit and integration tests (`cargo test --release`) cover Zobrist/cuckoo tables, six perft suites, full NNUE static and incremental evaluation, `Position::cur_state` pointer safety, large-page allocation fallback, dynamic UCI Hash/Threads resizing, and root-search behavior. Continuous integration re-runs them, plus the `bench` node-count check, on every push.
 
 Matching Stockfish's node counts exactly is a very strict test: a single differing history update, reduction term, or pruning condition changes the tree. Several divergences were tracked down during development by instrumenting both engines with identical trace output and bisecting the search ply by ply (for example a missing pawn-tracking update in `do_move`, an incorrect `Move::make`, a `partial_insertion_sort` discrepancy, and a quiet-history malus mismatch).
 
@@ -354,11 +379,14 @@ Getting the Rust port from "correct" to "as fast as a heavily tuned C++ engine" 
 - **2-way independent accumulators** in `fc_0` (`affine_transform_sparse_input.rs`) to hide FMA latency; `NNZInfo` is no longer zero-initialized.
 - **Cold paths out of line:** rare refresh and hybrid paths are marked `#[cold] #[inline(never)]`.
 
-### Search & memory
+### Search, memory & Lazy SMP scaling
 
-- **Compile-time tables:** `REDUCTIONS` is a `const` and the cuckoo repetition table is built by a `const fn generate_cuckoo()`, removing `LazyLock` atomic loads from LMR and repetition detection.
-- **Prefetching:** all five `SharedHistories` prefetches in `do_move_search`, plus a TT prefetch in `do_null_move`.
-- **Branchless** `ValueList::push_if_lt`; `&'static Network` cached directly on each `Worker`; fast `write_bytes` TT clearing.
+- **`static` lookup tables & zero `memcpy`:** Large lookup tables (`PSEUDO_ATTACKS`, `RANK_ATTACKS`, `DUAL_MAGICS`, `LINE_BB`, `BETWEEN_BB`, `ZOBRIST`, `REDUCTIONS`) are `pub static` rather than `pub const`, eliminating 4 KB stack materializations (`__chkstk` + `memcpy`) inside `update_piece_threats`.
+- **`#[repr(C)]` `StateInfo` prefix copy & cached `cur_state` pointer:** `do_move_search` copies only the 64-byte state prefix via `ptr::copy_nonoverlapping` directly into `cur_state.add(1)` (matching Stockfish's `std::memcpy(..., offsetof(StateInfo, key))`), eliminating `state_idx * sizeof(StateInfo)` multiplications on every `pos.state()` load.
+- **Zero-panic hot loops:** `search`, `qsearch`, and history helpers pass a raw `ss: *mut Stack` pointer (with 7 leading and 5 trailing sentinel slots) and monomorphize `MovePicker::generate_and_score<GEN>`, achieving **zero `panic_bounds_check`, zero `panic_const_div_*`, and zero `__chkstk`** across every hot search/NNUE function in disassembly.
+- **Persistent Lazy SMP pool & lockless counters (`src/memory.rs`, `src/thread.rs`):** Helper OS threads stay parked on condition variables with first-touch page-aligned `Worker` allocation (`PageAlignedBox<Worker>`), 64-byte `CachePadded` isolation, non-locked `RelaxedAtomicU64` node counters (avoiding `LOCK XADD`), parallel `TranspositionTable` / `SharedHistories` clearing, zero-alloc `RootMove` PV reuse (`clone_from`), and Stockfish's best-worker voting scheme.
+- **2 MB large/huge page support:** `TranspositionTable` and `SharedHistories` attempt 2 MB large pages (`VirtualAlloc(..., MEM_LARGE_PAGES)` with `SeLockMemoryPrivilege` on Windows; 2 MB aligned `madvise(MADV_HUGEPAGE)` on Linux) and fall back cleanly to 4 KB page-aligned allocations elsewhere.
+- **Prefetching:** all five `SharedHistories` prefetches in `do_move_search`, plus TT and continuation-correction prefetches.
 - **Correct `hashfull`** and a final `output_pv` on aborted iterations so GUIs and testers always see a consistent last PV.
 
 ### Instruction-cache & register-pressure tuning
@@ -403,7 +431,7 @@ C++ Stockfish maps its NNUE weights into Windows shared memory so concurrent pro
     ├── src/
     │   ├── types.rs  bitboard.rs  attacks.rs  position.rs  movegen.rs
     │   ├── evaluate.rs  search.rs  movepick.rs  history.rs  tt.rs
-    │   ├── thread.rs  timeman.rs  uci.rs  perft.rs  benchmark.rs
+    │   ├── memory.rs  thread.rs  timeman.rs  uci.rs  perft.rs  benchmark.rs
     │   ├── nnue/         # accumulator, feature_transformer, network, layers/, features/
     │   └── syzygy/       # tbprobe
     └── tests/
@@ -428,11 +456,10 @@ It runs the three suites described above (NPS scaling at 1/4/8/16 threads, the t
 
 ## Known Limitations
 
-- **High-thread-count scaling.** At 8 and 16 threads RustFish reaches ~71-85% of Stockfish's NPS. Lazy SMP synchronization and shared-structure contention are the next optimization targets. Up to 4 threads it is at or near parity.
-- **Single-thread speed gap.** RustFish runs at about 94-96% of PGO C++ Stockfish's NPS single-threaded; the search tree is identical, so this is purely a throughput gap.
-- **Platform support.** Developed and benchmarked on Windows x64 with AVX2. Linux and macOS (Intel) builds are produced by CI but are less tested. Apple Silicon and other ARM targets are not supported because the SIMD code is AVX2-only.
-- **Prebuilt binaries are not PGO builds.** Release binaries are built in CI with fat LTO but without profile-guided optimization, so they run somewhat slower than the PGO numbers reported above. Build from source with the PGO pipeline for peak speed.
-- **Match results** carry wide error bars because near-identical engines draw almost every game; treat them as evidence of parity rather than superiority.
+- **Platform support.** Developed and benchmarked primarily on Windows x64 with AVX2+BMI2. Linux and macOS (Intel) builds are produced and verified by CI (with cross-platform page-aligned allocation and Linux `MADV_HUGEPAGE` support in `src/memory.rs`) but are less extensively benchmarked. Apple Silicon and other ARM targets are not supported because the SIMD kernels are AVX2-only.
+- **Prebuilt binaries are not PGO builds.** Release binaries are built in CI with fat LTO (`target-cpu=x86-64-v3`) but without profile-guided optimization, so they run slightly slower than the dual-trained PGO numbers reported above. Build from source with the PGO pipeline for peak speed.
+- **Windows 2 MB large pages** require the `SeLockMemoryPrivilege` ("Lock pages in memory") user right; without it, RustFish automatically falls back to standard 4 KB `VirtualAlloc` pages.
+- **Match results** carry wide error bars because near-identical engines draw ~90% of games; treat them as evidence of parity rather than superiority.
 
 ---
 

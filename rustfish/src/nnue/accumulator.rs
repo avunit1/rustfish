@@ -295,11 +295,11 @@ unsafe fn append_changed_psq_indices(
 
     while removed_bb != 0 {
         let sq = removed_bb.pop_lsb();
-        removed.push(K32H3::make_index(perspective, sq, old_pieces[sq as usize], ksq) as u16);
+        removed.push(K32H3::make_index(perspective, sq, old_pieces[sq.idx()], ksq) as u16);
     }
     while added_bb != 0 {
         let sq = added_bb.pop_lsb();
-        added.push(K32H3::make_index(perspective, sq, new_pieces[sq as usize], ksq) as u16);
+        added.push(K32H3::make_index(perspective, sq, new_pieces[sq.idx()], ksq) as u16);
     }
 }
 
@@ -352,13 +352,13 @@ impl AccumulatorCaches {
 
     #[inline(always)]
     pub fn entry(&self, block: usize, sq: usize, c: usize) -> &CacheEntry {
-        &self.entries[Self::idx(block, sq, c)]
+        unsafe { self.entries.get_unchecked(Self::idx(block, sq, c)) }
     }
 
     #[inline(always)]
     pub fn entry_mut(&mut self, block: usize, sq: usize, c: usize) -> &mut CacheEntry {
         let idx = Self::idx(block, sq, c);
-        &mut self.entries[idx]
+        unsafe { self.entries.get_unchecked_mut(idx) }
     }
 
     pub fn clear(&mut self, biases: &[i16; L1]) {
@@ -439,6 +439,7 @@ impl AccumulatorStack {
         self.size -= 1;
     }
 
+    #[inline(always)]
     pub unsafe fn evaluate(
         &mut self,
         pos: &Position,
@@ -572,6 +573,7 @@ impl AccumulatorStack {
         }
     }
 
+    #[inline(always)]
     unsafe fn forward_update_incremental_both(
         &mut self,
         pos: &Position,
@@ -678,51 +680,124 @@ unsafe fn update_accumulator_refresh_cache(
 }
 
 #[inline(always)]
-unsafe fn apply_combined_tile<const PREFETCH: bool>(
-    from_acc: *const i16,
-    to_acc: *mut i16,
+unsafe fn apply_features_but_odd_const<const SIGN: i32, const PSQ_COUNT: usize, const PREFETCH: bool>(
+    acc: &mut Tile,
+    psq_ptrs: &[*const i8; PSQ_COUNT],
+    mut thr: &[u16],
+    thr_weights: *const i8,
     j: usize,
-    rem_ptrs: &[*const i8],
-    add_ptrs: &[*const i8],
-    odd_rem: *const i8,
-    odd_add: *const i8,
+    odd: &mut *const i8,
 ) {
-    let mut acc = load_tile(from_acc.add(j));
+    *odd = core::ptr::null();
+
+    if PSQ_COUNT == 2 {
+        apply_feature_pair::<SIGN, PREFETCH>(
+            acc,
+            (*psq_ptrs.get_unchecked(0)).add(j),
+            (*psq_ptrs.get_unchecked(1)).add(j),
+        );
+    } else if PSQ_COUNT == 1 {
+        if thr.is_empty() {
+            *odd = (*psq_ptrs.get_unchecked(0)).add(j);
+            return;
+        }
+        apply_feature_pair::<SIGN, PREFETCH>(
+            acc,
+            (*psq_ptrs.get_unchecked(0)).add(j),
+            thr_weights.add((*thr.get_unchecked(0) as usize) * DIMENSIONS),
+        );
+        thr = thr.get_unchecked(1..);
+    }
+
+    let mut thr_count = thr.len();
+    if (thr_count & 1) != 0 {
+        thr_count -= 1;
+        *odd = thr_weights.add((*thr.get_unchecked(thr_count) as usize) * DIMENSIONS);
+    }
 
     let mut i = 0;
-    let rem_len = rem_ptrs.len();
-    while i < rem_len {
-        apply_feature_pair::<-1, PREFETCH>(
-            &mut acc,
-            (*rem_ptrs.get_unchecked(i)).add(j),
-            (*rem_ptrs.get_unchecked(i + 1)).add(j),
+    while i < thr_count {
+        apply_feature_pair::<SIGN, PREFETCH>(
+            acc,
+            thr_weights.add((*thr.get_unchecked(i) as usize) * DIMENSIONS),
+            thr_weights.add((*thr.get_unchecked(i + 1) as usize) * DIMENSIONS),
         );
         i += 2;
     }
-
-    let mut i = 0;
-    let add_len = add_ptrs.len();
-    while i < add_len {
-        apply_feature_pair::<1, PREFETCH>(
-            &mut acc,
-            (*add_ptrs.get_unchecked(i)).add(j),
-            (*add_ptrs.get_unchecked(i + 1)).add(j),
-        );
-        i += 2;
-    }
-
-    if !odd_rem.is_null() && !odd_add.is_null() {
-        apply_feature_diff::<PREFETCH>(&mut acc, odd_add.add(j), odd_rem.add(j));
-    } else if !odd_rem.is_null() {
-        apply_feature_single::<-1, PREFETCH>(&mut acc, odd_rem.add(j));
-    } else if !odd_add.is_null() {
-        apply_feature_single::<1, PREFETCH>(&mut acc, odd_add.add(j));
-    }
-
-    store_tile(to_acc.add(j), acc);
 }
 
-#[inline(never)]
+#[inline(always)]
+unsafe fn apply_odd_ptrs<const PREFETCH: bool>(
+    acc: &mut Tile,
+    removed: *const i8,
+    added: *const i8,
+) {
+    if !removed.is_null() && !added.is_null() {
+        apply_feature_diff::<PREFETCH>(acc, added, removed);
+    } else if !removed.is_null() {
+        apply_feature_single::<-1, PREFETCH>(acc, removed);
+    } else if !added.is_null() {
+        apply_feature_single::<1, PREFETCH>(acc, added);
+    }
+}
+
+#[inline(always)]
+unsafe fn apply_combined_const<const REM: usize, const ADD: usize>(
+    perspective: Color,
+    ft: &FeatureTransformer,
+    from: &AccumulatorState,
+    to: &mut AccumulatorState,
+    psq_removed: &[u16],
+    thr_removed: &[u16],
+    psq_added: &[u16],
+    thr_added: &[u16],
+    psq_weights: *const i8,
+) {
+    let mut rem_ptrs = [core::ptr::null::<i8>(); REM];
+    let mut k = 0;
+    while k < REM {
+        rem_ptrs[k] = psq_weights.add((*psq_removed.get_unchecked(k) as usize) * DIMENSIONS);
+        k += 1;
+    }
+
+    let mut add_ptrs = [core::ptr::null::<i8>(); ADD];
+    let mut k = 0;
+    while k < ADD {
+        add_ptrs[k] = psq_weights.add((*psq_added.get_unchecked(k) as usize) * DIMENSIONS);
+        k += 1;
+    }
+
+    let c_idx = perspective as usize;
+    let from_acc = from.accumulation[c_idx].as_ptr();
+    let to_acc = to.accumulation[c_idx].as_mut_ptr();
+    let thr_base = ft.threat_and_pp_weights.as_ptr();
+
+    let mut j = 0;
+    while j < DIMENSIONS - TILE_HEIGHT {
+        let mut acc = load_tile(from_acc.add(j));
+        let thr_w = thr_base.add(j);
+        let mut odd_rem = core::ptr::null();
+        let mut odd_add = core::ptr::null();
+        apply_features_but_odd_const::<-1, REM, true>(&mut acc, &rem_ptrs, thr_removed, thr_w, j, &mut odd_rem);
+        apply_features_but_odd_const::<1, ADD, true>(&mut acc, &add_ptrs, thr_added, thr_w, j, &mut odd_add);
+        apply_odd_ptrs::<true>(&mut acc, odd_rem, odd_add);
+        store_tile(to_acc.add(j), acc);
+        j += TILE_HEIGHT;
+    }
+    {
+        let j = DIMENSIONS - TILE_HEIGHT;
+        let mut acc = load_tile(from_acc.add(j));
+        let thr_w = thr_base.add(j);
+        let mut odd_rem = core::ptr::null();
+        let mut odd_add = core::ptr::null();
+        apply_features_but_odd_const::<-1, REM, false>(&mut acc, &rem_ptrs, thr_removed, thr_w, j, &mut odd_rem);
+        apply_features_but_odd_const::<1, ADD, false>(&mut acc, &add_ptrs, thr_added, thr_w, j, &mut odd_add);
+        apply_odd_ptrs::<false>(&mut acc, odd_rem, odd_add);
+        store_tile(to_acc.add(j), acc);
+    }
+}
+
+#[inline(always)]
 unsafe fn apply_combined_dispatch(
     perspective: Color,
     ft: &FeatureTransformer,
@@ -734,56 +809,28 @@ unsafe fn apply_combined_dispatch(
     thr_added: &[u16],
     psq_weights: *const i8,
 ) {
-    let thr_weights = ft.threat_and_pp_weights.as_ptr();
-    let mut rem_buf = [const { core::mem::MaybeUninit::<*const i8>::uninit() }; 288];
-    let mut add_buf = [const { core::mem::MaybeUninit::<*const i8>::uninit() }; 288];
+    debug_assert!(psq_removed.len() == 1 || psq_removed.len() == 2);
+    debug_assert!(psq_added.len() == 1 || psq_added.len() == 2);
 
-    let mut n_rem = 0usize;
-    for &idx in psq_removed {
-        rem_buf.get_unchecked_mut(n_rem).write(psq_weights.add((idx as usize) * DIMENSIONS));
-        n_rem += 1;
-    }
-    for &idx in thr_removed {
-        rem_buf.get_unchecked_mut(n_rem).write(thr_weights.add((idx as usize) * DIMENSIONS));
-        n_rem += 1;
-    }
-
-    let mut n_add = 0usize;
-    for &idx in psq_added {
-        add_buf.get_unchecked_mut(n_add).write(psq_weights.add((idx as usize) * DIMENSIONS));
-        n_add += 1;
-    }
-    for &idx in thr_added {
-        add_buf.get_unchecked_mut(n_add).write(thr_weights.add((idx as usize) * DIMENSIONS));
-        n_add += 1;
-    }
-
-    let odd_rem = if (n_rem & 1) != 0 {
-        n_rem -= 1;
-        rem_buf.get_unchecked(n_rem).assume_init()
+    if psq_removed.len() == 1 {
+        if psq_added.len() == 1 {
+            apply_combined_const::<1, 1>(
+                perspective, ft, from, to, psq_removed, thr_removed, psq_added, thr_added, psq_weights,
+            );
+        } else {
+            apply_combined_const::<1, 2>(
+                perspective, ft, from, to, psq_removed, thr_removed, psq_added, thr_added, psq_weights,
+            );
+        }
+    } else if psq_added.len() == 1 {
+        apply_combined_const::<2, 1>(
+            perspective, ft, from, to, psq_removed, thr_removed, psq_added, thr_added, psq_weights,
+        );
     } else {
-        core::ptr::null()
-    };
-    let odd_add = if (n_add & 1) != 0 {
-        n_add -= 1;
-        add_buf.get_unchecked(n_add).assume_init()
-    } else {
-        core::ptr::null()
-    };
-
-    let rem_pairs = core::slice::from_raw_parts(rem_buf.as_ptr() as *const *const i8, n_rem);
-    let add_pairs = core::slice::from_raw_parts(add_buf.as_ptr() as *const *const i8, n_add);
-
-    let c_idx = perspective as usize;
-    let from_acc = from.accumulation[c_idx].as_ptr();
-    let to_acc = to.accumulation[c_idx].as_mut_ptr();
-
-    let mut j = 0;
-    while j < DIMENSIONS - TILE_HEIGHT {
-        apply_combined_tile::<true>(from_acc, to_acc, j, rem_pairs, add_pairs, odd_rem, odd_add);
-        j += TILE_HEIGHT;
+        apply_combined_const::<2, 2>(
+            perspective, ft, from, to, psq_removed, thr_removed, psq_added, thr_added, psq_weights,
+        );
     }
-    apply_combined_tile::<false>(from_acc, to_acc, DIMENSIONS - TILE_HEIGHT, rem_pairs, add_pairs, odd_rem, odd_add);
 }
 
 unsafe fn update_accumulator_incremental<const FORWARD: bool>(
@@ -831,6 +878,7 @@ unsafe fn update_accumulator_incremental<const FORWARD: bool>(
     target_state.computed[c_idx] = true;
 }
 
+#[inline(always)]
 unsafe fn update_accumulator_incremental_both(
     ft: &FeatureTransformer,
     white_ksq: Square,

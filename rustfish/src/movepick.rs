@@ -48,7 +48,7 @@ pub struct MovePicker {
     main_history: *const ButterflyHistory,
     low_ply_history: *const LowPlyHistory,
     capture_history: *const CapturePieceToHistory,
-    continuation_history: [*const PieceToHistory; 6],
+    continuation_history: *const *const PieceToHistory,
     shared_history: *const SharedHistories,
     tt_move: Move,
     cur: usize,
@@ -65,7 +65,8 @@ pub struct MovePicker {
 }
 
 impl MovePicker {
-    // Main search and quiescence search constructor
+    // Main search constructor
+    #[inline(always)]
     pub fn new(
         pos: &Position,
         tt_move: Move,
@@ -96,7 +97,7 @@ impl MovePicker {
             main_history: main_history as *const ButterflyHistory,
             low_ply_history: low_ply_history as *const LowPlyHistory,
             capture_history: capture_history as *const CapturePieceToHistory,
-            continuation_history: *continuation_history,
+            continuation_history: continuation_history.as_ptr(),
             shared_history: shared_history as *const SharedHistories,
             tt_move,
             cur: 0,
@@ -113,7 +114,51 @@ impl MovePicker {
         }
     }
 
+    // Quiescence search constructor (only uses ch0 for evasions)
+    #[inline(always)]
+    pub fn new_qsearch(
+        pos: &Position,
+        tt_move: Move,
+        main_history: &ButterflyHistory,
+        capture_history: &CapturePieceToHistory,
+        ch0: &*const PieceToHistory,
+    ) -> Self {
+        let first_stage = if pos.checkers() != 0 {
+            Stage::Evasion
+        } else {
+            Stage::QSearch
+        };
+
+        let stage = if tt_move.is_ok() && pos.legal(tt_move) {
+            Stage::TT
+        } else {
+            Stage::InitFirstStage
+        };
+
+        Self {
+            pos: pos as *const Position,
+            main_history: main_history as *const ButterflyHistory,
+            low_ply_history: std::ptr::null(),
+            capture_history: capture_history as *const CapturePieceToHistory,
+            continuation_history: ch0 as *const *const PieceToHistory,
+            shared_history: std::ptr::null(),
+            tt_move,
+            cur: 0,
+            end_cur: 0,
+            end_bad_captures: 0,
+            end_bad_moves: 0,
+            stage,
+            first_stage,
+            threshold: 0,
+            depth: DEPTH_QS,
+            ply: 0,
+            skip_quiets: false,
+            moves: [const { std::mem::MaybeUninit::uninit() }; MAX_MOVES],
+        }
+    }
+
     // ProbCut constructor
+    #[inline(always)]
     pub fn new_probcut(
         pos: &Position,
         tt_move: Move,
@@ -134,7 +179,7 @@ impl MovePicker {
             main_history: std::ptr::null(),
             low_ply_history: std::ptr::null(),
             capture_history: capture_history as *const CapturePieceToHistory,
-            continuation_history: [std::ptr::null(); 6],
+            continuation_history: std::ptr::null(),
             shared_history: std::ptr::null(),
             tt_move,
             cur: 0,
@@ -152,118 +197,113 @@ impl MovePicker {
     }
 
     #[inline(never)]
-    fn generate_and_score(&mut self, gen_type: GenType) -> usize {
+    fn generate_and_score<const GEN: u8>(&mut self) -> usize {
         let pos = unsafe { &*self.pos };
         let us = pos.side_to_move();
 
         let mut raw_moves = [const { std::mem::MaybeUninit::<Move>::uninit() }; MAX_MOVES];
-        let count = generate_moves_uninit(pos, &mut raw_moves, 0, gen_type);
+        let count = generate_moves_for::<GEN>(pos, &mut raw_moves, 0);
 
         let mut it = self.cur;
 
-        match gen_type {
-            GenType::Captures => {
-                let capt_hist = unsafe { &*self.capture_history };
-                unsafe {
-                    for i in 0..count {
-                        let m = raw_moves.get_unchecked(i).assume_init();
-                        let to = m.to_sq();
-                        let pc = pos.moved_piece(m);
-                        let captured_piece = pos.piece_on(to);
+        if GEN == GEN_CAPTURES {
+            let capt_hist = unsafe { &*self.capture_history };
+            unsafe {
+                for i in 0..count {
+                    let m = raw_moves.get_unchecked(i).assume_init();
+                    let to = m.to_sq();
+                    let pc = pos.moved_piece(m);
+                    let captured_piece = pos.piece_on(to);
 
-                        let val = capt_hist[pc as usize][to.idx()][type_of(captured_piece) as usize].get() as i32
-                            + 7 * PIECE_VALUE[captured_piece as usize];
+                    let val = capt_hist[pc as usize][to.idx()][type_of(captured_piece) as usize].get() as i32
+                        + 7 * *PIECE_VALUE.get_unchecked(captured_piece as usize);
 
-                        self.moves.get_unchecked_mut(it).write(ExtMove { mov: m, value: val });
-                        it += 1;
-                    }
+                    self.moves.get_unchecked_mut(it).write(ExtMove { mov: m, value: val });
+                    it += 1;
                 }
             }
+        } else if GEN == GEN_QUIETS {
+            let mut threat_by_lesser = [0u64; 7];
+            threat_by_lesser[PieceType::Knight as usize] = pos.threats_by(PieceType::Pawn);
+            threat_by_lesser[PieceType::Bishop as usize] = threat_by_lesser[PieceType::Knight as usize];
+            threat_by_lesser[PieceType::Rook as usize] = pos.threats_by(PieceType::Knight)
+                | pos.threats_by(PieceType::Bishop)
+                | threat_by_lesser[PieceType::Knight as usize];
+            threat_by_lesser[PieceType::Queen as usize] = pos.threats_by(PieceType::Rook)
+                | threat_by_lesser[PieceType::Rook as usize];
 
-            GenType::Quiets => {
-                let mut threat_by_lesser = [0u64; 7];
-                threat_by_lesser[PieceType::Knight as usize] = pos.threats_by(PieceType::Pawn);
-                threat_by_lesser[PieceType::Bishop as usize] = threat_by_lesser[PieceType::Knight as usize];
-                threat_by_lesser[PieceType::Rook as usize] = pos.threats_by(PieceType::Knight)
-                    | pos.threats_by(PieceType::Bishop)
-                    | threat_by_lesser[PieceType::Knight as usize];
-                threat_by_lesser[PieceType::Queen as usize] = pos.threats_by(PieceType::Rook)
-                    | threat_by_lesser[PieceType::Rook as usize];
+            let main_hist = unsafe { &(*self.main_history)[us as usize] };
+            let pawn_hist = unsafe { (*self.shared_history).pawn_entry(pos) };
+            let ch = self.continuation_history;
+            let (ch0, ch1, ch2, ch3, ch5) = unsafe {
+                (&**ch.add(0), &**ch.add(1), &**ch.add(2), &**ch.add(3), &**ch.add(5))
+            };
+            let ply = self.ply;
+            let lph = if !self.low_ply_history.is_null() && ply < LOW_PLY_HISTORY_SIZE {
+                Some(unsafe { (*self.low_ply_history).get_unchecked(ply) })
+            } else {
+                None
+            };
 
-                let main_hist = unsafe { &(*self.main_history)[us as usize] };
-                let pawn_hist = unsafe { (*self.shared_history).pawn_entry(pos) };
-                let ch0 = self.continuation_history[0];
-                let ch1 = self.continuation_history[1];
-                let ch2 = self.continuation_history[2];
-                let ch3 = self.continuation_history[3];
-                let ch5 = self.continuation_history[5];
-                let lph = if !self.low_ply_history.is_null() && self.ply < LOW_PLY_HISTORY_SIZE {
-                    Some(unsafe { &(*self.low_ply_history)[self.ply] })
-                } else {
-                    None
-                };
+            unsafe {
+                for i in 0..count {
+                    let m = raw_moves.get_unchecked(i).assume_init();
+                    let from = m.from_sq();
+                    let to = m.to_sq();
+                    let pc = pos.moved_piece(m);
+                    let pt = type_of(pc);
 
-                unsafe {
-                    for i in 0..count {
-                        let m = raw_moves.get_unchecked(i).assume_init();
-                        let from = m.from_sq();
-                        let to = m.to_sq();
-                        let pc = pos.moved_piece(m);
-                        let pt = type_of(pc);
+                    let pc_idx = pc as usize;
+                    let to_idx = to.idx();
+                    let mut value = 2 * main_hist[m.raw() as usize].get() as i32;
+                    value += 2 * pawn_hist[pc_idx][to_idx].get() as i32;
+                    value += ch0[pc_idx][to_idx].get() as i32;
+                    value += ch1[pc_idx][to_idx].get() as i32;
+                    value += ch2[pc_idx][to_idx].get() as i32;
+                    value += ch3[pc_idx][to_idx].get() as i32;
+                    value += ch5[pc_idx][to_idx].get() as i32;
 
-                        let to_idx = to.idx();
-                        let mut value = 2 * main_hist[m.raw() as usize].get() as i32;
-                        value += 2 * pawn_hist[pc as usize][to_idx].get() as i32;
-                        if !ch0.is_null() { value += (*ch0)[pc as usize][to_idx].get() as i32; }
-                        if !ch1.is_null() { value += (*ch1)[pc as usize][to_idx].get() as i32; }
-                        if !ch2.is_null() { value += (*ch2)[pc as usize][to_idx].get() as i32; }
-                        if !ch3.is_null() { value += (*ch3)[pc as usize][to_idx].get() as i32; }
-                        if !ch5.is_null() { value += (*ch5)[pc as usize][to_idx].get() as i32; }
+                    let tbl = *threat_by_lesser.get_unchecked(pt as usize);
+                    let v = 20 * (((tbl & square_bb(from)) != 0) as i32
+                        - ((tbl & square_bb(to)) != 0) as i32);
+                    value += *PIECE_VALUE.get_unchecked(pt as usize) * v;
 
-                        let tbl = *threat_by_lesser.get_unchecked(pt as usize);
-                        let v = 20 * (((tbl & square_bb(from)) != 0) as i32
-                            - ((tbl & square_bb(to)) != 0) as i32);
-                        value += PIECE_VALUE[pt as usize] * v;
-
-                        if let Some(lph) = lph {
-                            value += 8 * (lph[m.raw() as usize].get() as i32) / (1 + self.ply as i32);
-                        }
-
-                        if (pos.check_squares(pt) & square_bb(to)) != 0 && pos.see_ge(m, -75) {
-                            value += 16384;
-                        }
-
-                        self.moves.get_unchecked_mut(it).write(ExtMove { mov: m, value });
-                        it += 1;
+                    if let Some(lph) = lph {
+                        core::hint::assert_unchecked(ply < LOW_PLY_HISTORY_SIZE);
+                        value += 8 * (lph[m.raw() as usize].get() as i32) / (1 + ply as i32);
                     }
+
+                    if (pos.check_squares(pt) & square_bb(to)) != 0 && pos.see_ge(m, -75) {
+                        value += 16384;
+                    }
+
+                    self.moves.get_unchecked_mut(it).write(ExtMove { mov: m, value });
+                    it += 1;
                 }
             }
+        } else {
+            // GEN_EVASIONS
+            let main_hist = unsafe { &(*self.main_history)[us as usize] };
+            let ch0 = unsafe { &**self.continuation_history };
 
-            GenType::Evasions => {
-                let main_hist = unsafe { &(*self.main_history)[us as usize] };
-                let ch0 = self.continuation_history[0];
+            unsafe {
+                for i in 0..count {
+                    let m = raw_moves.get_unchecked(i).assume_init();
+                    let to = m.to_sq();
+                    let pc = pos.moved_piece(m);
+                    let captured_piece = pos.piece_on(to);
 
-                unsafe {
-                    for i in 0..count {
-                        let m = raw_moves.get_unchecked(i).assume_init();
-                        let to = m.to_sq();
-                        let pc = pos.moved_piece(m);
-                        let captured_piece = pos.piece_on(to);
+                    let value = if pos.capture_stage(m) {
+                        *PIECE_VALUE.get_unchecked(captured_piece as usize) + (1 << 28)
+                    } else {
+                        main_hist[m.raw() as usize].get() as i32
+                            + ch0[pc as usize][to.idx()].get() as i32
+                    };
 
-                        let value = if pos.capture_stage(m) {
-                            PIECE_VALUE[captured_piece as usize] + (1 << 28)
-                        } else {
-                            let ch0_val = if !ch0.is_null() { (*ch0)[pc as usize][to.idx()].get() as i32 } else { 0 };
-                            main_hist[m.raw() as usize].get() as i32 + ch0_val
-                        };
-
-                        self.moves.get_unchecked_mut(it).write(ExtMove { mov: m, value });
-                        it += 1;
-                    }
+                    self.moves.get_unchecked_mut(it).write(ExtMove { mov: m, value });
+                    it += 1;
                 }
             }
-
-            GenType::All => unreachable!(),
         }
 
         it
@@ -286,9 +326,9 @@ impl MovePicker {
                     self.end_bad_moves = 0;
 
                     if self.first_stage == Stage::Evasion {
-                        self.end_cur = self.generate_and_score(GenType::Evasions);
+                        self.end_cur = self.generate_and_score::<GEN_EVASIONS>();
                     } else {
-                        self.end_cur = self.generate_and_score(GenType::Captures);
+                        self.end_cur = self.generate_and_score::<GEN_CAPTURES>();
                     }
 
                     let slice = unsafe {
@@ -319,7 +359,7 @@ impl MovePicker {
 
                     if !self.skip_quiets {
                         self.cur = self.end_bad_moves;
-                        self.end_cur = self.generate_and_score(GenType::Quiets);
+                        self.end_cur = self.generate_and_score::<GEN_QUIETS>();
                         let slice = unsafe {
                             std::slice::from_raw_parts_mut(
                                 self.moves.as_mut_ptr().add(self.cur) as *mut ExtMove,

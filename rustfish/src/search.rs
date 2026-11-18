@@ -1,5 +1,7 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use crate::memory::RelaxedAtomicU64;
+use crate::thread::SharedControl;
 use crate::types::*;
 use crate::position::Position;
 use crate::history::*;
@@ -17,7 +19,7 @@ pub enum NodeType {
     Root,
 }
 
-pub const REDUCTIONS: [i32; MAX_MOVES] = [
+pub static REDUCTIONS: [i32; MAX_MOVES] = [
     0,0,15,24,31,36,40,43,46,49,51,53,55,57,59,60,
     62,63,64,66,67,68,69,70,71,72,73,73,74,75,76,77,
     77,78,79,79,80,81,81,82,82,83,83,84,84,85,85,86,
@@ -40,13 +42,15 @@ pub const REDUCTIONS: [i32; MAX_MOVES] = [
 pub fn reduction(i: bool, d: Depth, mn: usize) -> i32 {
     let d_clamped = (d as usize).min(MAX_MOVES - 1);
     let mn_clamped = mn.min(MAX_MOVES - 1);
-    let reduction_scale = REDUCTIONS[d_clamped] * REDUCTIONS[mn_clamped];
+    let reduction_scale = unsafe {
+        *REDUCTIONS.get_unchecked(d_clamped) * *REDUCTIONS.get_unchecked(mn_clamped)
+    };
     reduction_scale + (!i as i32) * reduction_scale * 197 / 512 + 948
 }
 
 #[inline(always)]
 pub fn lmr_divisor(depth: Depth) -> i32 {
-    let d = depth.min(16);
+    let d = depth.clamp(0, 16);
     3000 + 7 * (d - 8) * (d - 8)
 }
 
@@ -75,7 +79,7 @@ impl PVMoves {
     #[inline(always)]
     pub fn push_back(&mut self, m: Move) {
         debug_assert!(self.length < MAX_PLY + 1);
-        self.moves[self.length].write(m);
+        unsafe { self.moves.get_unchecked_mut(self.length).write(m); }
         self.length += 1;
     }
 
@@ -166,6 +170,8 @@ pub struct RootMove {
 
 impl RootMove {
     pub fn new(m: Move) -> Self {
+        let mut pv = Vec::with_capacity(32);
+        pv.push(m);
         Self {
             effort: 0,
             score: -VALUE_INFINITE,
@@ -179,9 +185,28 @@ impl RootMove {
             sel_depth: 0,
             tb_rank: 0,
             tb_score: VALUE_NONE,
-            pv: vec![m],
-            previous_pv: Vec::new(),
+            pv,
+            previous_pv: Vec::with_capacity(32),
         }
+    }
+
+    /// Resets this RootMove in-place from `src`, reusing existing Vec capacity (zero heap allocs).
+    #[inline(always)]
+    pub fn reset_from(&mut self, src: &RootMove) {
+        self.effort = src.effort;
+        self.score = src.score;
+        self.previous_score = src.previous_score;
+        self.average_score = src.average_score;
+        self.mean_squared_score = src.mean_squared_score;
+        self.uci_score = src.uci_score;
+        self.inexact_lower = src.inexact_lower;
+        self.inexact_upper = src.inexact_upper;
+        self.previous_score_exact = src.previous_score_exact;
+        self.sel_depth = src.sel_depth;
+        self.tb_rank = src.tb_rank;
+        self.tb_score = src.tb_score;
+        self.pv.clone_from(&src.pv);
+        self.previous_pv.clear();
     }
 
     #[inline(always)]
@@ -226,14 +251,13 @@ impl Ord for RootMove {
 }
 
 #[inline(always)]
-pub fn correction_value(
+pub unsafe fn correction_value(
     shared: &SharedHistories,
     pos: &Position,
-    ss_slice: &[Stack],
-    ss_idx: usize,
+    ss: *const Stack,
 ) -> i32 {
     let us = pos.side_to_move();
-    let m = unsafe { ss_slice.get_unchecked(ss_idx - 1).current_move };
+    let m = (*ss.sub(1)).current_move;
     let pcv = shared.pawn_correction_entry(pos)[us as usize].pawn.get() as i32;
     let micv = shared.minor_piece_correction_entry(pos)[us as usize].minor.get() as i32;
     let wnpcv = shared.nonpawn_correction_entry(Color::White, pos)[us as usize].non_pawn_white.get() as i32;
@@ -242,12 +266,10 @@ pub fn correction_value(
     let cntcv = if m.is_ok() {
         let to = m.to_sq().idx();
         let pc = pos.piece_on(m.to_sq()) as usize;
-        unsafe {
-            let h2 = (*ss_slice.get_unchecked(ss_idx - 2).continuation_correction_history)[pc][to].get() as i32;
-            let h4 = (*ss_slice.get_unchecked(ss_idx - 4).continuation_correction_history)[pc][to].get() as i32;
-            let h6 = (*ss_slice.get_unchecked(ss_idx - 6).continuation_correction_history)[pc][to].get() as i32;
-            7885 * (h2 + h4) + 6307 * h6
-        }
+        let h2 = (*(*ss.sub(2)).continuation_correction_history)[pc][to].get() as i32;
+        let h4 = (*(*ss.sub(4)).continuation_correction_history)[pc][to].get() as i32;
+        let h6 = (*(*ss.sub(6)).continuation_correction_history)[pc][to].get() as i32;
+        7885 * (h2 + h4) + 6307 * h6
     } else {
         80695
     };
@@ -302,40 +324,38 @@ pub fn value_from_tt(v: Value, ply: usize, r50c: i32) -> Value {
     v
 }
 
-pub fn update_continuation_histories(
-    ss_slice: &mut [Stack],
-    ss_idx: usize,
+pub unsafe fn update_continuation_histories(
+    ss: *mut Stack,
     pc: Piece,
     to: Square,
     bonus: i32,
 ) {
     const CONTHIST_BONUSES: [(usize, i32); 5] = [(1, 520), (2, 390), (3, 145), (4, 251), (6, 209)];
     const CMHC_MULTIPLIERS: [i32; 6] = [94, 103, 110, 106, 119, 126];
-    let mut positive_count = 0;
+    let mut positive_count = 0usize;
 
     let to_idx = to.idx();
+    let in_check = (*ss).in_check;
     for (i, weight) in CONTHIST_BONUSES {
-        if unsafe { ss_slice.get_unchecked(ss_idx).in_check } && i > 2 {
+        if in_check && i > 2 {
             break;
         }
-        if unsafe { ss_slice.get_unchecked(ss_idx - i).current_move.is_ok() } {
-            unsafe {
-                let history_entry = &(*ss_slice.get_unchecked(ss_idx - i).continuation_history)[pc as usize][to_idx];
-                if history_entry.get() > 0 {
-                    positive_count += 1;
-                }
-                let multiplier = CMHC_MULTIPLIERS[positive_count.min(5)];
-                let bonus_val = bonus * weight * multiplier / 65536 + 73 * ((i < 2) as i32);
-                history_entry.update(bonus_val);
+        let s = ss.sub(i);
+        if (*s).current_move.is_ok() {
+            let history_entry = &(*(*s).continuation_history)[pc as usize][to_idx];
+            if history_entry.get() > 0 {
+                positive_count += 1;
             }
+            let multiplier = *CMHC_MULTIPLIERS.get_unchecked(positive_count.min(5));
+            let bonus_val = bonus * weight * multiplier / 65536 + 73 * ((i < 2) as i32);
+            history_entry.update(bonus_val);
         }
     }
 }
 
-pub fn update_quiet_histories(
+pub unsafe fn update_quiet_histories(
     pos: &Position,
-    ss_slice: &mut [Stack],
-    ss_idx: usize,
+    ss: *mut Stack,
     main_history: &mut ButterflyHistory,
     low_ply_history: &mut LowPlyHistory,
     shared_history: &SharedHistories,
@@ -345,23 +365,23 @@ pub fn update_quiet_histories(
     let us = pos.side_to_move();
     main_history[us as usize][m.raw() as usize].update(bonus);
 
-    if ss_slice[ss_idx].ply < LOW_PLY_HISTORY_SIZE {
-        low_ply_history[ss_slice[ss_idx].ply][m.raw() as usize].update(bonus * 712 / 1024);
+    let ply = (*ss).ply;
+    if ply < LOW_PLY_HISTORY_SIZE {
+        low_ply_history.get_unchecked_mut(ply)[m.raw() as usize].update(bonus * 712 / 1024);
     }
 
     let pc = pos.moved_piece(m);
     let to = m.to_sq();
-    update_continuation_histories(ss_slice, ss_idx, pc, to, bonus * 750 / 1024);
+    update_continuation_histories(ss, pc, to, bonus * 750 / 1024);
 
     let pawn_bonus = bonus * (if bonus > -4 { 1104 } else { 459 }) / 1024;
     shared_history.pawn_entry(pos)[pc as usize][to.idx()].update(pawn_bonus);
 }
 
 #[inline(never)]
-pub fn update_all_stats(
+pub unsafe fn update_all_stats(
     pos: &Position,
-    ss_slice: &mut [Stack],
-    ss_idx: usize,
+    ss: *mut Stack,
     main_history: &mut ButterflyHistory,
     low_ply_history: &mut LowPlyHistory,
     capture_history: &mut CapturePieceToHistory,
@@ -374,10 +394,11 @@ pub fn update_all_stats(
     tt_move: Move,
 ) {
     let moved_piece = pos.moved_piece(best_move);
+    let ss_m1 = &*ss.sub(1);
 
     let mut bonus = (133 * depth - 81).min(1487)
         + 364 * ((best_move == tt_move) as i32)
-        + ss_slice[ss_idx - 1].stat_score / 28;
+        + ss_m1.stat_score / 28;
     let malus = (968 * depth - 235).min(2244);
 
     let count = (quiets_searched.len() + captures_searched.len()) as u64;
@@ -386,8 +407,7 @@ pub fn update_all_stats(
     if !pos.capture_stage(best_move) {
         update_quiet_histories(
             pos,
-            ss_slice,
-            ss_idx,
+            ss,
             main_history,
             low_ply_history,
             shared_history,
@@ -400,8 +420,7 @@ pub fn update_all_stats(
             actual_malus = actual_malus * 921 / 1024;
             update_quiet_histories(
                 pos,
-                ss_slice,
-                ss_idx,
+                ss,
                 main_history,
                 low_ply_history,
                 shared_history,
@@ -411,17 +430,16 @@ pub fn update_all_stats(
         }
     } else {
         let captured_pt = type_of(pos.piece_on(best_move.to_sq()));
-        capture_history[moved_piece as usize][best_move.to_sq() as usize][captured_pt as usize]
+        capture_history[moved_piece as usize][best_move.to_sq().idx()][captured_pt as usize]
             .update(bonus * 1427 / 1024);
     }
 
     if prev_sq != Square::SqNone
-        && (ss_slice[ss_idx - 1].move_count == 1 + (ss_slice[ss_idx - 1].tt_hit as i32))
+        && (ss_m1.move_count == 1 + (ss_m1.tt_hit as i32))
         && pos.captured_piece() == Piece::NoPiece
     {
         update_continuation_histories(
-            ss_slice,
-            ss_idx - 1,
+            ss.sub(1),
             pos.piece_on(prev_sq),
             prev_sq,
             -malus * 713 / 1024,
@@ -431,20 +449,19 @@ pub fn update_all_stats(
     for &m in captures_searched {
         let pc = pos.moved_piece(m);
         let captured_pt = type_of(pos.piece_on(m.to_sq()));
-        capture_history[pc as usize][m.to_sq() as usize][captured_pt as usize]
+        capture_history[pc as usize][m.to_sq().idx()][captured_pt as usize]
             .update(-malus * 1489 / 1024);
     }
 }
 
 #[inline(never)]
-pub fn update_correction_history(
+pub unsafe fn update_correction_history(
     pos: &Position,
-    ss_slice: &mut [Stack],
-    ss_idx: usize,
+    ss: *mut Stack,
     shared: &SharedHistories,
     bonus: i32,
 ) {
-    let m = ss_slice[ss_idx - 1].current_move;
+    let m = (*ss.sub(1)).current_move;
     let us = pos.side_to_move();
 
     const NON_PAWN_WEIGHT: i32 = 186;
@@ -457,26 +474,25 @@ pub fn update_correction_history(
     if m.is_ok() {
         let to = m.to_sq().idx();
         let pc = pos.piece_on(m.to_sq()) as usize;
-        unsafe {
-            (*ss_slice.get_unchecked(ss_idx - 2).continuation_correction_history)[pc][to].update(bonus * 130 / 128);
-            (*ss_slice.get_unchecked(ss_idx - 4).continuation_correction_history)[pc][to].update(bonus * 70 / 128);
-            (*ss_slice.get_unchecked(ss_idx - 6).continuation_correction_history)[pc][to].update(bonus * 35 / 128);
-        }
+        (*(*ss.sub(2)).continuation_correction_history)[pc][to].update(bonus * 130 / 128);
+        (*(*ss.sub(4)).continuation_correction_history)[pc][to].update(bonus * 70 / 128);
+        (*(*ss.sub(6)).continuation_correction_history)[pc][to].update(bonus * 35 / 128);
     }
 }
 
 #[inline(always)]
-pub fn is_shuffling(m: Move, ss_slice: &[Stack], ss_idx: usize, pos: &Position) -> bool {
+pub unsafe fn is_shuffling(m: Move, ss: *const Stack, pos: &Position) -> bool {
     if pos.capture_stage(m) || pos.rule50_count() < 10 {
         return false;
     }
-    if pos.state().plies_from_null < 6 || ss_slice[ss_idx].ply < 20 {
+    if pos.state().plies_from_null < 6 || (*ss).ply < 20 {
         return false;
     }
-    m.from_sq() == ss_slice[ss_idx - 2].current_move.to_sq()
-        && ss_slice[ss_idx - 2].current_move.from_sq() == ss_slice[ss_idx - 4].current_move.to_sq()
+    m.from_sq() == (*ss.sub(2)).current_move.to_sq()
+        && (*ss.sub(2)).current_move.from_sq() == (*ss.sub(4)).current_move.to_sq()
 }
 
+#[repr(C, align(64))]
 pub struct Worker {
     pub main_history: ButterflyHistory,
     pub low_ply_history: LowPlyHistory,
@@ -488,9 +504,9 @@ pub struct Worker {
     pub refresh_table: crate::nnue::accumulator::AccumulatorCaches,
     pub network: &'static crate::nnue::Network,
 
-    pub nodes: u64,
-    pub tb_hits: u64,
-    pub best_move_changes: u64,
+    pub nodes: RelaxedAtomicU64,
+    pub tb_hits: RelaxedAtomicU64,
+    pub best_move_changes: RelaxedAtomicU64,
     pub sel_depth: i32,
     pub nmp_min_ply: usize,
 
@@ -503,8 +519,7 @@ pub struct Worker {
     pub last_iteration_idx_pv: Vec<Move>,
     pub thread_idx: usize,
     pub limits: LimitsType,
-    pub stop: Arc<AtomicBool>,
-    pub thread_nodes: Arc<Vec<crate::thread::CachePaddedAtomicU64>>,
+    pub shared_ctrl: Arc<SharedControl>,
     pub tm: TimeManagement,
     pub original_time_adjust: f64,
     pub best_previous_score: Value,
@@ -518,8 +533,7 @@ pub struct Worker {
 impl Worker {
     pub fn new(
         thread_idx: usize,
-        stop: Arc<AtomicBool>,
-        thread_nodes: Arc<Vec<crate::thread::CachePaddedAtomicU64>>,
+        shared_ctrl: Arc<SharedControl>,
     ) -> Self {
         let network = crate::nnue::network::get_network();
         Self {
@@ -531,21 +545,20 @@ impl Worker {
             accumulator_stack: crate::nnue::accumulator::AccumulatorStack::new(),
             refresh_table: crate::nnue::accumulator::AccumulatorCaches::new(&network.feature_transformer.biases),
             network,
-            nodes: 0,
-            tb_hits: 0,
-            best_move_changes: 0,
+            nodes: RelaxedAtomicU64::new(0),
+            tb_hits: RelaxedAtomicU64::new(0),
+            best_move_changes: RelaxedAtomicU64::new(0),
             sel_depth: 0,
             nmp_min_ply: 0,
             optimism: [0; COLOR_NB],
             root_pos: Position::new(),
-            root_moves: Vec::new(),
+            root_moves: Vec::with_capacity(64),
             root_depth: 0,
             seek_mate: false,
-            last_iteration_idx_pv: Vec::new(),
+            last_iteration_idx_pv: Vec::with_capacity(MAX_PLY),
             thread_idx,
             limits: LimitsType::default(),
-            stop,
-            thread_nodes,
+            shared_ctrl,
             tm: TimeManagement::new(),
             original_time_adjust: -1.0,
             best_previous_score: VALUE_INFINITE,
@@ -557,11 +570,12 @@ impl Worker {
         }
     }
 
+    #[inline(always)]
     pub fn is_mainthread(&self) -> bool {
         self.thread_idx == 0
     }
 
-    pub fn setup_search(&mut self, pos: &Position, limits: LimitsType) {
+    pub fn setup_search_with_moves(&mut self, pos: &Position, limits: &LimitsType, root_moves: &[RootMove]) {
         self.accumulator_stack.reset();
         self.limits = limits.clone();
         if self.is_mainthread() {
@@ -576,32 +590,29 @@ impl Worker {
                 &mut self.original_time_adjust,
             );
         }
-        self.nodes = 0;
-        self.tb_hits = 0;
-        self.best_move_changes = 0;
+        self.nodes.store(0);
+        self.tb_hits.store(0);
+        self.best_move_changes.store(0);
         self.calls_cnt = 0;
         self.nmp_min_ply = 0;
         self.root_depth = 0;
-        self.root_pos = pos.clone();
-        self.root_moves.clear();
-
-        let mut raw_moves = [Move::none(); MAX_MOVES];
-        let count = crate::movegen::generate_moves(&self.root_pos, &mut raw_moves, 0, crate::movegen::GenType::All);
-        for i in 0..count {
-            let m = raw_moves[i];
-            if self.root_pos.legal(m) {
-                if !limits.searchmoves.is_empty() {
-                    if limits.searchmoves.contains(&m) {
-                        self.root_moves.push(RootMove::new(m));
-                    }
-                } else {
-                    self.root_moves.push(RootMove::new(m));
-                }
+        self.root_pos.copy_from(pos);
+        let n = root_moves.len();
+        let existing = self.root_moves.len();
+        let common = existing.min(n);
+        for i in 0..common {
+            self.root_moves[i].reset_from(&root_moves[i]);
+        }
+        if n < existing {
+            self.root_moves.truncate(n);
+        } else {
+            for rm in &root_moves[common..n] {
+                self.root_moves.push(rm.clone());
             }
         }
     }
 
-    pub fn clear(&mut self, shared_history: &mut SharedHistories) {
+    pub fn clear_local(&mut self) {
         for c in 0..COLOR_NB {
             for i in 0..UINT_16_HISTORY_SIZE {
                 self.main_history[c][i].set(-5);
@@ -614,7 +625,6 @@ impl Worker {
                 }
             }
         }
-        shared_history.clear();
         self.tt_move_history.set(0);
         self.original_time_adjust = -1.0;
         self.best_previous_score = VALUE_INFINITE;
@@ -631,7 +641,7 @@ impl Worker {
                 }
             }
         }
-        self.refresh_table.clear(&crate::nnue::network::get_network().feature_transformer.biases);
+        self.refresh_table.clear(&self.network.feature_transformer.biases);
     }
 
     #[inline(never)]
@@ -649,69 +659,67 @@ impl Worker {
         if self.calls_cnt > 0 {
             return;
         }
+        self.check_time_slow();
+    }
 
+    #[cold]
+    #[inline(never)]
+    fn check_time_slow(&mut self) {
         self.calls_cnt = if self.limits.nodes != 0 {
             512.min((self.limits.nodes / 1024) as i32)
         } else {
             512
         };
 
-        let elapsed = self.tm.elapsed(|| self.nodes);
+        let elapsed = self.tm.elapsed(|| self.shared_ctrl.nodes_searched());
 
         if (self.limits.use_time_management() && elapsed > self.tm.maximum())
             || (self.limits.movetime != 0 && elapsed >= self.limits.movetime)
-            || (self.limits.nodes != 0 && self.nodes >= self.limits.nodes)
+            || (self.limits.nodes != 0 && self.shared_ctrl.nodes_searched() >= self.limits.nodes)
         {
-            self.stop.store(true, Ordering::Relaxed);
+            self.shared_ctrl.stop.store(true, Ordering::Relaxed);
         }
     }
 
     #[inline(always)]
-    fn do_move(
+    unsafe fn do_move(
         &mut self,
         pos: &mut Position,
         m: Move,
         gives_check: bool,
         capture: bool,
-        ss_slice: &mut [Stack],
-        ss_idx: usize,
+        ss: *mut Stack,
         tt: &TranspositionTable,
         shared_history: &SharedHistories,
     ) {
         tt.prefetch(pos.prefetch_key(m));
         #[cfg(target_arch = "x86_64")]
-        if ss_idx >= 5 {
+        {
             let pc = pos.moved_piece(m) as usize;
-            let to = m.to_sq() as usize;
-            unsafe {
-                let p1 = &(*ss_slice.get_unchecked(ss_idx - 1).continuation_correction_history)[pc][to] as *const _ as *const i8;
-                let p3 = &(*ss_slice.get_unchecked(ss_idx - 3).continuation_correction_history)[pc][to] as *const _ as *const i8;
-                let p5 = &(*ss_slice.get_unchecked(ss_idx - 5).continuation_correction_history)[pc][to] as *const _ as *const i8;
-                core::arch::x86_64::_mm_prefetch(p1, core::arch::x86_64::_MM_HINT_T0);
-                core::arch::x86_64::_mm_prefetch(p3, core::arch::x86_64::_MM_HINT_T0);
-                core::arch::x86_64::_mm_prefetch(p5, core::arch::x86_64::_MM_HINT_T0);
-            }
+            let to = m.to_sq().idx();
+            let p1 = &(*(*ss.sub(1)).continuation_correction_history)[pc][to] as *const _ as *const i8;
+            let p3 = &(*(*ss.sub(3)).continuation_correction_history)[pc][to] as *const _ as *const i8;
+            let p5 = &(*(*ss.sub(5)).continuation_correction_history)[pc][to] as *const _ as *const i8;
+            core::arch::x86_64::_mm_prefetch(p1, core::arch::x86_64::_MM_HINT_T0);
+            core::arch::x86_64::_mm_prefetch(p3, core::arch::x86_64::_MM_HINT_T0);
+            core::arch::x86_64::_mm_prefetch(p5, core::arch::x86_64::_MM_HINT_T0);
         }
-        self.nodes += 1;
-        if (self.nodes & 1023) == 0 {
-            self.thread_nodes[self.thread_idx].0.store(self.nodes, Ordering::Relaxed);
-        }
+        self.nodes.inc();
         let dirties = self.accumulator_stack.push(pos);
         pos.do_move_search(m, gives_check, &mut dirties.dirties, shared_history);
 
-        if ss_idx > 0 {
-            let dp = dirties.dirties.dirty_piece;
-            ss_slice[ss_idx].current_move = m;
-            let in_check = ss_slice[ss_idx].in_check as usize;
-            let cap = capture as usize;
-            let dp_pc = dp.pc as usize;
-            let to = m.to_sq() as usize;
+        let dp = dirties.dirties.dirty_piece;
+        let ss_cur = &mut *ss;
+        ss_cur.current_move = m;
+        let in_check = ss_cur.in_check as usize;
+        let cap = capture as usize;
+        let dp_pc = dp.pc as usize;
+        let to = m.to_sq().idx();
 
-            ss_slice[ss_idx].continuation_history =
-                &shared_history.continuation_history[in_check][cap][dp_pc][to];
-            ss_slice[ss_idx].continuation_correction_history =
-                &mut self.continuation_correction_history[dp_pc][to];
-        }
+        ss_cur.continuation_history =
+            &shared_history.continuation_history[in_check][cap][dp_pc][to];
+        ss_cur.continuation_correction_history =
+            &mut self.continuation_correction_history[dp_pc][to];
     }
 
     #[inline(always)]
@@ -721,20 +729,20 @@ impl Worker {
     }
 
     #[inline(always)]
-    fn do_null_move(
+    unsafe fn do_null_move(
         &mut self,
         pos: &mut Position,
-        ss_slice: &mut [Stack],
-        ss_idx: usize,
+        ss: *mut Stack,
         tt: &TranspositionTable,
         shared_history: &SharedHistories,
     ) {
         pos.do_null_move();
         tt.prefetch(pos.key());
-        ss_slice[ss_idx].current_move = Move::null();
-        ss_slice[ss_idx].continuation_history =
+        let ss_cur = &mut *ss;
+        ss_cur.current_move = Move::null();
+        ss_cur.continuation_history =
             &shared_history.continuation_history[0][0][Piece::NoPiece as usize][0];
-        ss_slice[ss_idx].continuation_correction_history =
+        ss_cur.continuation_correction_history =
             &mut self.continuation_correction_history[Piece::NoPiece as usize][0];
     }
 
@@ -744,11 +752,10 @@ impl Worker {
     }
 
     // Main search function
-    pub fn search<const PV_NODE: bool, const ROOT_NODE: bool>(
+    pub unsafe fn search<const PV_NODE: bool, const ROOT_NODE: bool>(
         &mut self,
         pos: &mut Position,
-        ss_slice: &mut [Stack],
-        ss_idx: usize,
+        ss: *mut Stack,
         mut alpha: Value,
         mut beta: Value,
         mut depth: Depth,
@@ -756,19 +763,19 @@ impl Worker {
         tt: &TranspositionTable,
         shared_history: &SharedHistories,
     ) -> Value {
-
-
         let all_node = !(PV_NODE || cut_node);
-        assert!(ss_idx >= 6 && ss_idx + 2 < ss_slice.len());
 
         if depth <= 0 {
-            return self.qsearch::<PV_NODE>(pos, ss_slice, ss_idx, alpha, beta, tt, shared_history);
+            return self.qsearch::<PV_NODE>(pos, ss, alpha, beta, tt, shared_history);
         }
 
         depth = depth.min(MAX_PLY as i32 - 1);
+        core::hint::assert_unchecked(depth >= 1 && depth < MAX_PLY as i32);
 
-        if !ROOT_NODE && alpha < VALUE_DRAW && pos.upcoming_repetition(ss_slice[ss_idx].ply) {
-            alpha = value_draw(self.nodes);
+        let ply = (*ss).ply;
+
+        if !ROOT_NODE && alpha < VALUE_DRAW && pos.upcoming_repetition(ply) {
+            alpha = value_draw(self.nodes.load());
             if alpha >= beta {
                 return alpha;
             }
@@ -779,59 +786,65 @@ impl Worker {
         let max_value = VALUE_INFINITE;
         let mut best_move = Move::none();
 
-        ss_slice[ss_idx].in_check = pos.checkers() != 0;
+        let in_check = pos.checkers() != 0;
+        (*ss).in_check = in_check;
         let prior_capture = pos.captured_piece() != Piece::NoPiece;
         let us = pos.side_to_move();
-        ss_slice[ss_idx].move_count = 0;
+        (*ss).move_count = 0;
 
-        ss_slice[ss_idx].follow_pv = ROOT_NODE
-            || (ss_slice[ss_idx - 1].follow_pv
-                && (ss_slice[ss_idx].ply - 1 < self.last_iteration_idx_pv.len()
-                    && ss_slice[ss_idx - 1].current_move == self.last_iteration_idx_pv[ss_slice[ss_idx].ply - 1]));
+        let ss_m1 = ss.sub(1);
+        let ss_m2 = ss.sub(2);
+        let ss_p1 = ss.add(1);
+        let ss_p2 = ss.add(2);
+
+        (*ss).follow_pv = ROOT_NODE
+            || ((*ss_m1).follow_pv
+                && (ply - 1 < self.last_iteration_idx_pv.len()
+                    && (*ss_m1).current_move == *self.last_iteration_idx_pv.get_unchecked(ply - 1)));
 
         if self.is_mainthread() {
             self.check_time();
         }
 
-        if PV_NODE && self.sel_depth < (ss_slice[ss_idx].ply + 1) as i32 {
-            self.sel_depth = (ss_slice[ss_idx].ply + 1) as i32;
+        if PV_NODE && self.sel_depth < (ply + 1) as i32 {
+            self.sel_depth = (ply + 1) as i32;
         }
 
         if !ROOT_NODE {
-            if self.stop.load(Ordering::Relaxed) || pos.is_draw(ss_slice[ss_idx].ply) || ss_slice[ss_idx].ply >= MAX_PLY {
-                return if ss_slice[ss_idx].ply >= MAX_PLY && !ss_slice[ss_idx].in_check {
+            if self.shared_ctrl.stop.load(Ordering::Relaxed) || pos.is_draw(ply) || ply >= MAX_PLY {
+                return if ply >= MAX_PLY && !in_check {
                     self.evaluate(pos)
                 } else {
-                    value_draw(self.nodes)
+                    value_draw(self.nodes.load())
                 };
             }
 
-            alpha = alpha.max(mated_in(ss_slice[ss_idx].ply));
-            beta = beta.min(mate_in(ss_slice[ss_idx].ply + 1));
+            alpha = alpha.max(mated_in(ply));
+            beta = beta.min(mate_in(ply + 1));
             if alpha >= beta {
                 return alpha;
             }
         }
 
-        let prev_sq = if ss_slice[ss_idx - 1].current_move.is_ok() {
-            ss_slice[ss_idx - 1].current_move.to_sq()
+        let prev_sq = if (*ss_m1).current_move.is_ok() {
+            (*ss_m1).current_move.to_sq()
         } else {
             Square::SqNone
         };
 
-        let prior_reduction = ss_slice[ss_idx - 1].reduction;
-        ss_slice[ss_idx - 1].reduction = 0;
-        ss_slice[ss_idx].stat_score = 0;
-        ss_slice[ss_idx + 2].cutoff_cnt = 0;
-        ss_slice[ss_idx + 1].prior_nmp_fail_high = 0;
+        let prior_reduction = (*ss_m1).reduction;
+        (*ss_m1).reduction = 0;
+        (*ss).stat_score = 0;
+        (*ss_p2).cutoff_cnt = 0;
+        (*ss_p1).prior_nmp_fail_high = 0;
 
-        let correction_val = correction_value(shared_history, pos, ss_slice, ss_idx);
+        let correction_val = correction_value(shared_history, pos, ss);
 
-        let excluded_move = ss_slice[ss_idx].excluded_move;
+        let excluded_move = (*ss).excluded_move;
         let pos_key = pos.key();
         let (tt_hit, mut tt_data, tt_writer) = tt.probe(pos_key);
 
-        ss_slice[ss_idx].tt_hit = tt_hit;
+        (*ss).tt_hit = tt_hit;
         tt_data.move_ = if ROOT_NODE {
             self.root_moves[self.pv_idx].pv[0]
         } else if tt_hit {
@@ -840,12 +853,12 @@ impl Worker {
             Move::none()
         };
         tt_data.value = if tt_hit {
-            value_from_tt(tt_data.value, ss_slice[ss_idx].ply, pos.rule50_count() as i32)
+            value_from_tt(tt_data.value, ply, pos.rule50_count() as i32)
         } else {
             VALUE_NONE
         };
-        ss_slice[ss_idx].tt_pv = if excluded_move.is_ok() {
-            ss_slice[ss_idx].tt_pv
+        (*ss).tt_pv = if excluded_move.is_ok() {
+            (*ss).tt_pv
         } else {
             PV_NODE || (tt_hit && tt_data.is_pv)
         };
@@ -854,19 +867,19 @@ impl Worker {
         let mut unadjusted_static_eval = VALUE_NONE;
         let mut eval: Value;
 
-        if ss_slice[ss_idx].in_check {
-            ss_slice[ss_idx].static_eval = ss_slice[ss_idx - 2].static_eval;
-            eval = ss_slice[ss_idx].static_eval;
+        if in_check {
+            (*ss).static_eval = (*ss_m2).static_eval;
+            eval = (*ss).static_eval;
         } else if excluded_move.is_ok() {
-            unadjusted_static_eval = ss_slice[ss_idx].static_eval;
-            eval = ss_slice[ss_idx].static_eval;
-        } else if ss_slice[ss_idx].tt_hit {
+            unadjusted_static_eval = (*ss).static_eval;
+            eval = (*ss).static_eval;
+        } else if tt_hit {
             unadjusted_static_eval = tt_data.eval;
             if !is_valid(unadjusted_static_eval) {
                 unadjusted_static_eval = self.evaluate(pos);
             }
-            ss_slice[ss_idx].static_eval = to_corrected_static_eval(unadjusted_static_eval, correction_val);
-            eval = ss_slice[ss_idx].static_eval;
+            (*ss).static_eval = to_corrected_static_eval(unadjusted_static_eval, correction_val);
+            eval = (*ss).static_eval;
 
             if is_valid(tt_data.value)
                 && ((tt_data.bound as u8) & (if tt_data.value > eval { Bound::Lower as u8 } else { Bound::Upper as u8 })) != 0
@@ -875,13 +888,13 @@ impl Worker {
             }
         } else {
             unadjusted_static_eval = self.evaluate(pos);
-            ss_slice[ss_idx].static_eval = to_corrected_static_eval(unadjusted_static_eval, correction_val);
-            eval = ss_slice[ss_idx].static_eval;
+            (*ss).static_eval = to_corrected_static_eval(unadjusted_static_eval, correction_val);
+            eval = (*ss).static_eval;
 
             tt_writer.write(
                 pos_key,
                 VALUE_NONE,
-                ss_slice[ss_idx].tt_pv,
+                (*ss).tt_pv,
                 Bound::None,
                 DEPTH_UNSEARCHED,
                 Move::none(),
@@ -890,19 +903,17 @@ impl Worker {
             );
         }
 
-        let mut improving = ss_slice[ss_idx].static_eval > ss_slice[ss_idx - 2].static_eval;
-        let opponent_worsening = ss_slice[ss_idx].static_eval > -ss_slice[ss_idx - 1].static_eval;
+        let mut improving = (*ss).static_eval > (*ss_m2).static_eval;
+        let opponent_worsening = (*ss).static_eval > -(*ss_m1).static_eval;
 
         if prior_reduction >= 3 && !opponent_worsening {
             depth += 1;
         }
-        if prior_reduction >= 2 && depth >= 2 && ss_slice[ss_idx].static_eval + ss_slice[ss_idx - 1].static_eval > 166 {
+        if prior_reduction >= 2 && depth >= 2 && (*ss).static_eval + (*ss_m1).static_eval > 166 {
             depth -= 1;
         }
 
-        
-
-// Early TT Cutoff
+        // Early TT Cutoff
         if !PV_NODE && !excluded_move.is_ok() && is_valid(tt_data.value)
             && tt_data.depth > depth - (if tt_data.value <= beta { 1 } else { 0 })
         {
@@ -913,8 +924,7 @@ impl Worker {
                     if !tt_capture {
                         update_quiet_histories(
                             pos,
-                            ss_slice,
-                            ss_idx,
+                            ss,
                             &mut self.main_history,
                             &mut self.low_ply_history,
                             shared_history,
@@ -922,10 +932,9 @@ impl Worker {
                             131 * depth,
                         );
                     }
-                    if prev_sq != Square::SqNone && ss_slice[ss_idx - 1].move_count < 5 && !prior_capture {
+                    if prev_sq != Square::SqNone && (*ss_m1).move_count < 5 && !prior_capture {
                         update_continuation_histories(
-                            ss_slice,
-                            ss_idx - 1,
+                            ss_m1,
                             pos.piece_on(prev_sq),
                             prev_sq,
                             -2210,
@@ -935,8 +944,7 @@ impl Worker {
 
                 if pos.rule50_count() < 96 {
                     if depth >= 7 && tt_data.move_.is_ok() && pos.legal(tt_data.move_) && !is_decisive(tt_data.value) {
-                        let mut tmp_dirties = Dirties::default();
-                        pos.do_move(tt_data.move_, pos.gives_check(tt_data.move_), Some(&mut tmp_dirties));
+                        pos.do_move(tt_data.move_, pos.gives_check(tt_data.move_), None);
                         let next_pos_key = pos.key();
                         let (_, tt_data_next, _) = tt.probe(next_pos_key);
                         pos.undo_move(tt_data.move_);
@@ -956,24 +964,24 @@ impl Worker {
             }
         }
 
-        if !ss_slice[ss_idx].in_check {
-            if ss_slice[ss_idx - 1].current_move.is_ok() && !ss_slice[ss_idx - 1].in_check && !prior_capture {
-                let eval_diff = (-(ss_slice[ss_idx - 1].static_eval + ss_slice[ss_idx].static_eval)).clamp(-189, 194) + 60;
-                self.main_history[(!us) as usize][ss_slice[ss_idx - 1].current_move.raw() as usize].update(eval_diff * 11);
+        if !in_check {
+            if (*ss_m1).current_move.is_ok() && !(*ss_m1).in_check && !prior_capture {
+                let eval_diff = (-((*ss_m1).static_eval + (*ss).static_eval)).clamp(-189, 194) + 60;
+                self.main_history[(!us) as usize][(*ss_m1).current_move.raw() as usize].update(eval_diff * 11);
                 if !tt_hit && type_of(pos.piece_on(prev_sq)) != PieceType::Pawn
-                    && ss_slice[ss_idx - 1].current_move.move_type() != MoveType::Promotion
+                    && (*ss_m1).current_move.move_type() != MoveType::Promotion
                 {
-                    shared_history.pawn_entry(pos)[pos.piece_on(prev_sq) as usize][prev_sq as usize].update(eval_diff * 13);
+                    shared_history.pawn_entry(pos)[pos.piece_on(prev_sq) as usize][prev_sq.idx()].update(eval_diff * 13);
                 }
             }
 
             // Step 8: Razoring
             if all_node && eval < alpha - 342 * depth && !self.seek_mate {
-                return self.qsearch::<false>(pos, ss_slice, ss_idx, alpha, beta, tt, shared_history);
+                return self.qsearch::<false>(pos, ss, alpha, beta, tt, shared_history);
             }
 
             // Step 9: Futility pruning: child node
-            if !ss_slice[ss_idx].tt_pv
+            if !(*ss).tt_pv
                 && depth < (if self.seek_mate { 6 } else { 19 })
                 && eval >= beta
                 && (!tt_data.move_.is_ok() || tt_capture)
@@ -981,7 +989,7 @@ impl Worker {
                 && !is_win(eval)
             {
                 let mut futility_mult = (45 + depth * 4).min(85);
-                futility_mult -= 20 * (!ss_slice[ss_idx].tt_hit as i32);
+                futility_mult -= 20 * (!tt_hit as i32);
 
                 let futility_margin = futility_mult * depth
                     - (2789 * (improving as i32) + 335 * (opponent_worsening as i32)) * futility_mult / 1024
@@ -994,23 +1002,22 @@ impl Worker {
 
             // Step 10: Null move search
             if cut_node
-                && ss_slice[ss_idx].static_eval + 50 * ss_slice[ss_idx].prior_nmp_fail_high >= beta - 13 * depth - 47 * (improving as i32) + 365
+                && (*ss).static_eval + 50 * (*ss).prior_nmp_fail_high >= beta - 13 * depth - 47 * (improving as i32) + 365
                 && !excluded_move.is_ok()
                 && pos.non_pawn_material_c(us) != 0
-                && ss_slice[ss_idx].ply >= self.nmp_min_ply
+                && ply >= self.nmp_min_ply
                 && beta >= -2000
             {
-                let mut r = 7 + depth / 3 + 0.max((ss_slice[ss_idx].static_eval - beta) / 256) - (self.thread_idx as i32 & 1);
+                let mut r = 7 + depth / 3 + 0.max(((*ss).static_eval - beta) / 256) - (self.thread_idx as i32 & 1);
                 if self.seek_mate {
                     r -= r / 2;
                 }
 
-                self.do_null_move(pos, ss_slice, ss_idx, tt, shared_history);
+                self.do_null_move(pos, ss, tt, shared_history);
 
                 let null_value = -self.search::<false, false>(
                     pos,
-                    ss_slice,
-                    ss_idx + 1,
+                    ss_p1,
                     -beta,
                     -beta + 1,
                     depth - r,
@@ -1023,15 +1030,14 @@ impl Worker {
 
                 if null_value >= beta && !is_win(null_value) {
                     if self.nmp_min_ply != 0 || depth < 16 {
-                        ss_slice[ss_idx].prior_nmp_fail_high += 1;
+                        (*ss).prior_nmp_fail_high += 1;
                         return null_value;
                     }
 
-                    self.nmp_min_ply = ss_slice[ss_idx].ply + 3 * (depth - r) as usize / 4;
+                    self.nmp_min_ply = ply + 3 * (depth - r) as usize / 4;
                     let v = self.search::<false, false>(
                         pos,
-                        ss_slice,
-                        ss_idx,
+                        ss,
                         beta - 1,
                         beta,
                         depth - r,
@@ -1042,16 +1048,16 @@ impl Worker {
                     self.nmp_min_ply = 0;
 
                     if v >= beta {
-                        ss_slice[ss_idx].prior_nmp_fail_high += 1;
+                        (*ss).prior_nmp_fail_high += 1;
                         return null_value;
                     }
                 }
             }
 
-            improving |= ss_slice[ss_idx].static_eval >= beta;
+            improving |= (*ss).static_eval >= beta;
 
             // Step 11: IIR
-            if !ss_slice[ss_idx].follow_pv && !all_node && depth >= 6 && !tt_data.move_.is_ok() {
+            if !(*ss).follow_pv && !all_node && depth >= 6 && !tt_data.move_.is_ok() {
                 depth -= 1;
             }
 
@@ -1061,7 +1067,7 @@ impl Worker {
                 let mut mp = MovePicker::new_probcut(
                     pos,
                     tt_data.move_,
-                    prob_cut_beta - ss_slice[ss_idx].static_eval,
+                    prob_cut_beta - (*ss).static_eval,
                     &self.capture_history,
                 );
                 let prob_cut_depth = depth - (if improving { 5 } else { 3 });
@@ -1076,15 +1082,14 @@ impl Worker {
                     }
 
                     let gives_check = pos.gives_check(m);
-                    self.do_move(pos, m, gives_check, true, ss_slice, ss_idx, tt, shared_history);
+                    self.do_move(pos, m, gives_check, true, ss, tt, shared_history);
 
-                    let mut v = -self.qsearch::<false>(pos, ss_slice, ss_idx + 1, -prob_cut_beta, -prob_cut_beta + 1, tt, shared_history);
+                    let mut v = -self.qsearch::<false>(pos, ss_p1, -prob_cut_beta, -prob_cut_beta + 1, tt, shared_history);
 
                     if v >= prob_cut_beta && prob_cut_depth > 0 {
                         v = -self.search::<false, false>(
                             pos,
-                            ss_slice,
-                            ss_idx + 1,
+                            ss_p1,
                             -prob_cut_beta,
                             -prob_cut_beta + 1,
                             prob_cut_depth,
@@ -1099,8 +1104,8 @@ impl Worker {
                     if v >= prob_cut_beta {
                         tt_writer.write(
                             pos_key,
-                            value_to_tt(v, ss_slice[ss_idx].ply),
-                            ss_slice[ss_idx].tt_pv,
+                            value_to_tt(v, ply),
+                            (*ss).tt_pv,
                             Bound::Lower,
                             prob_cut_depth + 1,
                             m,
@@ -1130,12 +1135,12 @@ impl Worker {
         }
 
         let cont_hist: [*const PieceToHistory; 6] = [
-            ss_slice[ss_idx - 1].continuation_history,
-            ss_slice[ss_idx - 2].continuation_history,
-            ss_slice[ss_idx - 3].continuation_history,
-            ss_slice[ss_idx - 4].continuation_history,
-            ss_slice[ss_idx - 5].continuation_history,
-            ss_slice[ss_idx - 6].continuation_history,
+            (*ss_m1).continuation_history,
+            (*ss_m2).continuation_history,
+            (*ss.sub(3)).continuation_history,
+            (*ss.sub(4)).continuation_history,
+            (*ss.sub(5)).continuation_history,
+            (*ss.sub(6)).continuation_history,
         ];
 
         let mut mp = MovePicker::new(
@@ -1147,7 +1152,7 @@ impl Worker {
             &self.capture_history,
             &cont_hist,
             shared_history,
-            ss_slice[ss_idx].ply,
+            ply,
         );
 
         let mut move_count = 0;
@@ -1171,10 +1176,10 @@ impl Worker {
             }
 
             move_count += 1;
-            ss_slice[ss_idx].move_count = move_count;
+            (*ss).move_count = move_count;
 
             if PV_NODE {
-                ss_slice[ss_idx + 1].pv = std::ptr::null_mut();
+                (*ss_p1).pv = std::ptr::null_mut();
             }
 
             let mut extension = 0;
@@ -1188,9 +1193,12 @@ impl Worker {
             if PV_NODE {
                 r -= 512;
             }
-            if ss_slice[ss_idx].tt_pv {
+            if (*ss).tt_pv {
                 r += 929;
             }
+
+            let to_sq = m.to_sq();
+            let to_idx = to_sq.idx();
 
             // Step 15: Pruning at shallow depths
             if !ROOT_NODE && pos.non_pawn_material_c(us) != 0 && !is_loss(best_value) {
@@ -1201,28 +1209,27 @@ impl Worker {
                 let mut lmr_depth = new_depth - r / 1024;
 
                 if capture || gives_check {
-                    let captured_piece = pos.piece_on(m.to_sq());
-                    let capt_hist = self.capture_history[moved_piece as usize][m.to_sq() as usize][type_of(captured_piece) as usize].get() as i32;
+                    let captured_piece = pos.piece_on(to_sq);
+                    let capt_hist = self.capture_history[moved_piece as usize][to_idx][type_of(captured_piece) as usize].get() as i32;
 
                     if !gives_check && lmr_depth < 8 {
-                        let futility_value = ss_slice[ss_idx].static_eval + 234 + 247 * lmr_depth
-                            + PIECE_VALUE[captured_piece as usize] + 134 * capt_hist / 1024;
+                        let futility_value = (*ss).static_eval + 234 + 247 * lmr_depth
+                            + *PIECE_VALUE.get_unchecked(captured_piece as usize) + 134 * capt_hist / 1024;
                         if futility_value <= alpha {
                             continue;
                         }
                     }
 
                     let margin = 177 * depth + capt_hist * 34 / 1024;
-                    if (alpha >= VALUE_DRAW || pos.non_pawn_material_c(us) != PIECE_VALUE[moved_piece as usize])
+                    if (alpha >= VALUE_DRAW || pos.non_pawn_material_c(us) != *PIECE_VALUE.get_unchecked(moved_piece as usize))
                         && !pos.see_ge(m, -margin)
                     {
                         continue;
                     }
-                } else if !ss_slice[ss_idx].follow_pv || !PV_NODE {
-                    let mut history = unsafe {
-                        (*cont_hist[0])[moved_piece as usize][m.to_sq() as usize].get() as i32
-                            + (*cont_hist[1])[moved_piece as usize][m.to_sq() as usize].get() as i32
-                    } + shared_history.pawn_entry(pos)[moved_piece as usize][m.to_sq() as usize].get() as i32;
+                } else if !(*ss).follow_pv || !PV_NODE {
+                    let mut history = (*cont_hist[0])[moved_piece as usize][to_idx].get() as i32
+                        + (*cont_hist[1])[moved_piece as usize][to_idx].get() as i32
+                        + shared_history.pawn_entry(pos)[moved_piece as usize][to_idx].get() as i32;
 
                     if history < -4136 * depth {
                         continue;
@@ -1231,10 +1238,10 @@ impl Worker {
                     history += 69 * (self.main_history[us as usize][m.raw() as usize].get() as i32) / 32;
                     lmr_depth += history / lmr_divisor(depth);
 
-                    let futility_value = ss_slice[ss_idx].static_eval + 119 * lmr_depth
-                        + 90 * ((ss_slice[ss_idx].static_eval > alpha) as i32) + 164;
+                    let futility_value = (*ss).static_eval + 119 * lmr_depth
+                        + 90 * (((*ss).static_eval > alpha) as i32) + 164;
 
-                    if !ss_slice[ss_idx].in_check && lmr_depth < 12 && futility_value <= alpha {
+                    if !in_check && lmr_depth < 12 && futility_value <= alpha {
                         if best_value <= futility_value && !is_decisive(best_value) && !is_win(futility_value) {
                             best_value = futility_value;
                         }
@@ -1249,19 +1256,18 @@ impl Worker {
             }
 
             // Step 16: Singular Extensions
-            if !ROOT_NODE && m == tt_data.move_ && !excluded_move.is_ok() && depth >= 6 + (ss_slice[ss_idx].tt_pv as i32)
+            if !ROOT_NODE && m == tt_data.move_ && !excluded_move.is_ok() && depth >= 6 + ((*ss).tt_pv as i32)
                 && is_valid(tt_data.value) && !is_decisive(tt_data.value)
                 && ((tt_data.bound as u8) & (Bound::Lower as u8)) != 0
-                && tt_data.depth >= depth - 3 && !is_shuffling(m, ss_slice, ss_idx, pos) && !self.seek_mate
+                && tt_data.depth >= depth - 3 && !is_shuffling(m, ss, pos) && !self.seek_mate
             {
-                let singular_beta = tt_data.value - (59 + 66 * ((ss_slice[ss_idx].tt_pv && !PV_NODE) as i32)) * depth / 63;
+                let singular_beta = tt_data.value - (59 + 66 * (((*ss).tt_pv && !PV_NODE) as i32)) * depth / 63;
                 let singular_depth = new_depth / 2;
 
-                ss_slice[ss_idx].excluded_move = m;
+                (*ss).excluded_move = m;
                 let v = self.search::<false, false>(
                     pos,
-                    ss_slice,
-                    ss_idx,
+                    ss,
                     singular_beta - 1,
                     singular_beta,
                     singular_depth,
@@ -1269,25 +1275,25 @@ impl Worker {
                     tt,
                     shared_history,
                 );
-                ss_slice[ss_idx].excluded_move = Move::none();
+                (*ss).excluded_move = Move::none();
 
                 if v < singular_beta {
                     let corr_val_adj = correction_val.abs() / 198368;
                     let double_margin = -2 + 204 * (PV_NODE as i32) - 152 * (!tt_capture as i32) - corr_val_adj
                         - 1175 * (self.tt_move_history.get() as i32) / 114178
-                        - ((ss_slice[ss_idx].ply > self.root_depth as usize) as i32) * 38;
+                        - ((ply > self.root_depth as usize) as i32) * 38;
                     let triple_margin = 70 + 279 * (PV_NODE as i32) - 188 * (!tt_capture as i32)
-                        + 81 * (ss_slice[ss_idx].tt_pv as i32) - corr_val_adj
-                        - ((ss_slice[ss_idx].ply > self.root_depth as usize) as i32) * 43;
+                        + 81 * ((*ss).tt_pv as i32) - corr_val_adj
+                        - ((ply > self.root_depth as usize) as i32) * 43;
 
                     extension = 1 + ((v < singular_beta - double_margin) as i32) + ((v < singular_beta - triple_margin) as i32);
                     depth += 1;
                 } else if v >= beta && !is_decisive(v) {
                     self.tt_move_history.update(-421 - 110 * depth);
-                    if !ss_slice[ss_idx].in_check && v > ss_slice[ss_idx].static_eval {
-                        let bonus = ((v - ss_slice[ss_idx].static_eval) * 664 / 1024)
+                    if !in_check && v > (*ss).static_eval {
+                        let bonus = ((v - (*ss).static_eval) * 664 / 1024)
                             .clamp(-CORRECTION_HISTORY_LIMIT / 4, CORRECTION_HISTORY_LIMIT / 4);
-                        update_correction_history(pos, ss_slice, ss_idx, shared_history, bonus);
+                        update_correction_history(pos, ss, shared_history, bonus);
                     }
                     return v;
                 } else if tt_data.value >= beta || cut_node {
@@ -1295,16 +1301,14 @@ impl Worker {
                 }
             }
 
-            let node_count = self.nodes;
+            let node_count = if ROOT_NODE { self.nodes.load() } else { 0 };
 
             // Step 17: Make the move
-            
-            
-self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history);
+            self.do_move(pos, m, gives_check, capture, ss, tt, shared_history);
             new_depth += extension;
 
             // Step 18: LMR
-            if ss_slice[ss_idx].tt_pv {
+            if (*ss).tt_pv {
                 r -= 3023 + (PV_NODE as i32) * 1004 + ((tt_data.value > alpha) as i32) * 885
                     + ((tt_data.depth >= depth) as i32) * (816 + (cut_node as i32) * 940);
             }
@@ -1318,29 +1322,29 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
             if tt_capture {
                 r += 1079;
             }
-            if ss_slice[ss_idx + 1].cutoff_cnt > 1 {
-                r += 264 + 1095 * ((ss_slice[ss_idx + 1].cutoff_cnt > 2) as i32) + 1138 * (all_node as i32);
+            if (*ss_p1).cutoff_cnt > 1 {
+                r += 264 + 1095 * (((*ss_p1).cutoff_cnt > 2) as i32) + 1138 * (all_node as i32);
             } else if m == tt_data.move_ {
                 r -= 2179;
             }
 
             if capture {
-                ss_slice[ss_idx].stat_score = 873 * (PIECE_VALUE[pos.captured_piece() as usize]) / 128
-                    + self.capture_history[moved_piece as usize][m.to_sq() as usize][type_of(pos.captured_piece()) as usize].get() as i32;
+                let cap_pc = pos.captured_piece();
+                (*ss).stat_score = 873 * (*PIECE_VALUE.get_unchecked(cap_pc as usize)) / 128
+                    + self.capture_history[moved_piece as usize][to_idx][type_of(cap_pc) as usize].get() as i32;
             } else {
-                ss_slice[ss_idx].stat_score = (2252 * (self.main_history[us as usize][m.raw() as usize].get() as i32)
-                    + unsafe {
-                        1126 * ((*cont_hist[0])[moved_piece as usize][m.to_sq() as usize].get() as i32)
-                            + 1093 * ((*cont_hist[1])[moved_piece as usize][m.to_sq() as usize].get() as i32)
-                    }) / 1024;
+                (*ss).stat_score = (2252 * (self.main_history[us as usize][m.raw() as usize].get() as i32)
+                    + 1126 * ((*cont_hist[0])[moved_piece as usize][to_idx].get() as i32)
+                    + 1093 * ((*cont_hist[1])[moved_piece as usize][to_idx].get() as i32)) / 1024;
             }
 
-            r -= ss_slice[ss_idx].stat_score * 439 / 4096;
+            r -= (*ss).stat_score * 439 / 4096;
 
             if !capture && !is_decisive(alpha) {
                 r += 3 * (alpha - eval).clamp(-64, 96);
             }
             if all_node {
+                core::hint::assert_unchecked(depth >= 1);
                 r += r * 276 / (256 * depth + 268);
             }
             if self.seek_mate && r > 0 {
@@ -1351,10 +1355,10 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
 
             // Apply LMR
             if depth >= 2 && move_count > 1 {
-                let d = 1.max(new_depth + (-r / 1024).min(if ss_slice[ss_idx].ply < 2 * self.root_depth as usize { 2 } else { 0 })) + (PV_NODE as i32);
-                ss_slice[ss_idx].reduction = new_depth - d;
-                value = -self.search::<false, false>(pos, ss_slice, ss_idx + 1, -(alpha + 1), -alpha, d, true, tt, shared_history);
-                ss_slice[ss_idx].reduction = 0;
+                let d = 1.max(new_depth + (-r / 1024).min(if ply < 2 * self.root_depth as usize { 2 } else { 0 })) + (PV_NODE as i32);
+                (*ss).reduction = new_depth - d;
+                value = -self.search::<false, false>(pos, ss_p1, -(alpha + 1), -alpha, d, true, tt, shared_history);
+                (*ss).reduction = 0;
 
                 if value > alpha {
                     let do_deeper = d < new_depth && value > best_value + 53;
@@ -1362,10 +1366,10 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
                     new_depth += (do_deeper as i32) - (do_shallower as i32);
 
                     if new_depth > d {
-                        value = -self.search::<false, false>(pos, ss_slice, ss_idx + 1, -(alpha + 1), -alpha, new_depth, !cut_node, tt, shared_history);
+                        value = -self.search::<false, false>(pos, ss_p1, -(alpha + 1), -alpha, new_depth, !cut_node, tt, shared_history);
                     }
 
-                    update_continuation_histories(ss_slice, ss_idx, moved_piece, m.to_sq(), 1334);
+                    update_continuation_histories(ss, moved_piece, to_sq, 1334);
                 }
             } else if !PV_NODE || move_count > 1 {
                 if !tt_data.move_.is_ok() {
@@ -1373,8 +1377,7 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
                 }
                 value = -self.search::<false, false>(
                     pos,
-                    ss_slice,
-                    ss_idx + 1,
+                    ss_p1,
                     -(alpha + 1),
                     -alpha,
                     new_depth - ((r > 5234) as i32) - ((r > 5487 && new_depth > 2) as i32),
@@ -1388,7 +1391,7 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
 
             // Step 20: PV search
             if PV_NODE && (move_count == 1 || value > alpha) {
-                ss_slice[ss_idx + 1].pv = &mut pv;
+                (*ss_p1).pv = &mut pv;
                 pv.clear();
 
                 if m == tt_data.move_
@@ -1398,23 +1401,19 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
                     new_depth = new_depth.max(1);
                 }
 
-                value = -self.search::<true, false>(pos, ss_slice, ss_idx + 1, -beta, -alpha, new_depth, false, tt, shared_history);
+                value = -self.search::<true, false>(pos, ss_p1, -beta, -alpha, new_depth, false, tt, shared_history);
             }
 
             // Step 21: Undo move
             self.undo_move(pos, m);
-            
 
-
-
-            if self.stop.load(Ordering::Relaxed) {
+            if self.shared_ctrl.stop.load(Ordering::Relaxed) {
                 return VALUE_ZERO;
             }
 
             if ROOT_NODE {
                 let rm_idx = self.root_moves.iter().position(|rm| rm.pv[0] == m).unwrap();
-                let n = self.nodes - node_count;
-
+                let n = self.nodes.load() - node_count;
 
                 let rm = &mut self.root_moves[rm_idx];
                 rm.effort += n;
@@ -1459,19 +1458,19 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
                     }
 
                     rm.pv.truncate(1);
-                    if !ss_slice[ss_idx + 1].pv.is_null() {
+                    if !(*ss_p1).pv.is_null() {
                         rm.pv.extend_from_slice(pv.as_slice());
                     }
 
                     if move_count > 1 && self.pv_idx == 0 {
-                        self.best_move_changes += 1;
+                        self.best_move_changes.inc();
                     }
                 } else {
                     rm.score = -VALUE_INFINITE;
                 }
             }
 
-            let inc = (value == best_value && ss_slice[ss_idx].ply + 2 >= self.root_depth as usize && (self.nodes & 14) == 0 && !is_win(value.abs() + 1)) as i32;
+            let inc = (value == best_value && ply + 2 >= self.root_depth as usize && (self.nodes.load() & 14) == 0 && !is_win(value.abs() + 1)) as i32;
 
             if value + inc > best_value {
                 best_value = value;
@@ -1480,20 +1479,18 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
                     best_move = m;
 
                     if PV_NODE && !ROOT_NODE {
-                        unsafe {
-                            if !ss_slice[ss_idx].pv.is_null() {
-                                let child_pv = if !ss_slice[ss_idx + 1].pv.is_null() {
-                                    Some(&pv)
-                                } else {
-                                    None
-                                };
-                                (*ss_slice[ss_idx].pv).update(m, child_pv);
-                            }
+                        if !(*ss).pv.is_null() {
+                            let child_pv = if !(*ss_p1).pv.is_null() {
+                                Some(&pv)
+                            } else {
+                                None
+                            };
+                            (*(*ss).pv).update(m, child_pv);
                         }
                     }
 
                     if value >= beta {
-                        ss_slice[ss_idx].cutoff_cnt += ((extension < 2) || PV_NODE) as i32;
+                        (*ss).cutoff_cnt += ((extension < 2) || PV_NODE) as i32;
                         break;
                     }
 
@@ -1507,40 +1504,40 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
 
             if m != best_move && move_count <= 32 {
                 if capture {
-                    captures_searched[captures_cnt] = m;
+                    *captures_searched.get_unchecked_mut(captures_cnt) = m;
                     captures_cnt += 1;
                 } else {
-                    quiets_searched[quiets_cnt] = m;
+                    *quiets_searched.get_unchecked_mut(quiets_cnt) = m;
                     quiets_cnt += 1;
                 }
             }
         }
 
         if best_value >= beta && !is_decisive(best_value) && !is_decisive(alpha) {
+            core::hint::assert_unchecked(depth >= 1);
             best_value = (best_value * depth + beta) / (depth + 1);
         }
 
         if move_count == 0 {
             best_value = if excluded_move.is_ok() {
                 alpha
-            } else if ss_slice[ss_idx].in_check {
-                mated_in(ss_slice[ss_idx].ply)
+            } else if in_check {
+                mated_in(ply)
             } else {
                 VALUE_DRAW
             };
         } else if best_move.is_ok() {
             update_all_stats(
                 pos,
-                ss_slice,
-                ss_idx,
+                ss,
                 &mut self.main_history,
                 &mut self.low_ply_history,
                 &mut self.capture_history,
                 shared_history,
                 best_move,
                 prev_sq,
-                &quiets_searched[..quiets_cnt],
-                &captures_searched[..captures_cnt],
+                quiets_searched.get_unchecked(..quiets_cnt),
+                captures_searched.get_unchecked(..captures_cnt),
                 depth,
                 tt_data.move_,
             );
@@ -1549,25 +1546,25 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
             }
         } else if !prior_capture && prev_sq != Square::SqNone {
             let mut bonus_scale = -241;
-            bonus_scale -= ss_slice[ss_idx - 1].stat_score / 98;
+            bonus_scale -= (*ss_m1).stat_score / 98;
             bonus_scale += (59 * depth).min(420);
-            bonus_scale += 186 * ((ss_slice[ss_idx - 1].move_count > 9) as i32);
-            bonus_scale += 142 * ((!ss_slice[ss_idx].in_check && best_value <= ss_slice[ss_idx].static_eval - 106) as i32);
-            bonus_scale += 159 * ((!ss_slice[ss_idx - 1].in_check && best_value <= -ss_slice[ss_idx - 1].static_eval - 68) as i32);
+            bonus_scale += 186 * (((*ss_m1).move_count > 9) as i32);
+            bonus_scale += 142 * ((!in_check && best_value <= (*ss).static_eval - 106) as i32);
+            bonus_scale += 159 * ((!(*ss_m1).in_check && best_value <= -(*ss_m1).static_eval - 68) as i32);
 
             bonus_scale = bonus_scale.max(0);
             let scaled_bonus = (150 * depth - 85).min(1337) * bonus_scale;
 
-            update_continuation_histories(ss_slice, ss_idx - 1, pos.piece_on(prev_sq), prev_sq, scaled_bonus * 263 / 16384);
-            self.main_history[(!us) as usize][ss_slice[ss_idx - 1].current_move.raw() as usize].update(scaled_bonus * 215 / 32768);
+            update_continuation_histories(ss_m1, pos.piece_on(prev_sq), prev_sq, scaled_bonus * 263 / 16384);
+            self.main_history[(!us) as usize][(*ss_m1).current_move.raw() as usize].update(scaled_bonus * 215 / 32768);
 
-            if type_of(pos.piece_on(prev_sq)) != PieceType::Pawn && ss_slice[ss_idx - 1].current_move.move_type() != MoveType::Promotion {
-                shared_history.pawn_entry(pos)[pos.piece_on(prev_sq) as usize][prev_sq as usize].update(scaled_bonus * 324 / 8192);
+            if type_of(pos.piece_on(prev_sq)) != PieceType::Pawn && (*ss_m1).current_move.move_type() != MoveType::Promotion {
+                shared_history.pawn_entry(pos)[pos.piece_on(prev_sq) as usize][prev_sq.idx()].update(scaled_bonus * 324 / 8192);
             }
         } else if prev_sq != Square::SqNone {
             let captured_piece = pos.captured_piece();
             if captured_piece != Piece::NoPiece {
-                self.capture_history[pos.piece_on(prev_sq) as usize][prev_sq as usize][type_of(captured_piece) as usize].update(892);
+                self.capture_history[pos.piece_on(prev_sq) as usize][prev_sq.idx()][type_of(captured_piece) as usize].update(892);
             }
         }
 
@@ -1576,7 +1573,7 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
         }
 
         if best_value <= alpha {
-            ss_slice[ss_idx].tt_pv = ss_slice[ss_idx].tt_pv || ss_slice[ss_idx - 1].tt_pv;
+            (*ss).tt_pv = (*ss).tt_pv || (*ss_m1).tt_pv;
         }
 
         if !excluded_move.is_ok() && !(ROOT_NODE && self.pv_idx != 0) {
@@ -1590,8 +1587,8 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
 
             tt_writer.write(
                 pos_key,
-                value_to_tt(best_value, ss_slice[ss_idx].ply),
-                ss_slice[ss_idx].tt_pv,
+                value_to_tt(best_value, ply),
+                (*ss).tt_pv,
                 bound,
                 if move_count != 0 { depth } else { (MAX_PLY as i32 - 1).min(depth + 6) },
                 best_move,
@@ -1600,56 +1597,57 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
             );
         }
 
-        if !ss_slice[ss_idx].in_check && !(best_move.is_ok() && pos.capture(best_move))
-            && (best_value > ss_slice[ss_idx].static_eval) == best_move.is_ok()
+        if !in_check && !(best_move.is_ok() && pos.capture(best_move))
+            && (best_value > (*ss).static_eval) == best_move.is_ok()
         {
-            let bonus = (((best_value - ss_slice[ss_idx].static_eval) * depth * (if best_move.is_ok() { 12 } else { 18 })) / 128)
+            let bonus = (((best_value - (*ss).static_eval) * depth * (if best_move.is_ok() { 12 } else { 18 })) / 128)
                 .clamp(-CORRECTION_HISTORY_LIMIT / 4, CORRECTION_HISTORY_LIMIT / 4);
-            update_correction_history(pos, ss_slice, ss_idx, shared_history, 1061 * bonus / 1024);
+            update_correction_history(pos, ss, shared_history, 1061 * bonus / 1024);
         }
 
         best_value
     }
 
     // Quiescence search function
-    pub fn qsearch<const PV_NODE: bool>(
+    pub unsafe fn qsearch<const PV_NODE: bool>(
         &mut self,
         pos: &mut Position,
-        ss_slice: &mut [Stack],
-        ss_idx: usize,
+        ss: *mut Stack,
         mut alpha: Value,
         beta: Value,
         tt: &TranspositionTable,
         shared_history: &SharedHistories,
     ) -> Value {
-        assert!(ss_idx >= 6 && ss_idx + 2 < ss_slice.len());
-        if alpha < VALUE_DRAW && pos.upcoming_repetition(ss_slice[ss_idx].ply) {
-            alpha = value_draw(self.nodes);
+        let ply = (*ss).ply;
+        if alpha < VALUE_DRAW && pos.upcoming_repetition(ply) {
+            alpha = value_draw(self.nodes.load());
             if alpha >= beta {
                 return alpha;
             }
         }
 
+        let ss_m1 = ss.sub(1);
+        let ss_p1 = ss.add(1);
+
         let mut pv = PVMoves::default();
         if PV_NODE {
-            ss_slice[ss_idx + 1].pv = &mut pv;
-            unsafe {
-                if !ss_slice[ss_idx].pv.is_null() {
-                    (*ss_slice[ss_idx].pv).clear();
-                }
+            (*ss_p1).pv = &mut pv;
+            if !(*ss).pv.is_null() {
+                (*(*ss).pv).clear();
             }
         }
 
         let mut best_move = Move::none();
-        ss_slice[ss_idx].in_check = pos.checkers() != 0;
+        let in_check = pos.checkers() != 0;
+        (*ss).in_check = in_check;
         let mut move_count = 0;
 
-        if PV_NODE && self.sel_depth < (ss_slice[ss_idx].ply + 1) as i32 {
-            self.sel_depth = (ss_slice[ss_idx].ply + 1) as i32;
+        if PV_NODE && self.sel_depth < (ply + 1) as i32 {
+            self.sel_depth = (ply + 1) as i32;
         }
 
-        if pos.is_draw(ss_slice[ss_idx].ply) || ss_slice[ss_idx].ply >= MAX_PLY {
-            return if ss_slice[ss_idx].ply >= MAX_PLY && !ss_slice[ss_idx].in_check {
+        if pos.is_draw(ply) || ply >= MAX_PLY {
+            return if ply >= MAX_PLY && !in_check {
                 self.evaluate(pos)
             } else {
                 VALUE_DRAW
@@ -1659,10 +1657,10 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
         let pos_key = pos.key();
         let (tt_hit, mut tt_data, tt_writer) = tt.probe(pos_key);
 
-        ss_slice[ss_idx].tt_hit = tt_hit;
+        (*ss).tt_hit = tt_hit;
         tt_data.move_ = if tt_hit { tt_data.move_ } else { Move::none() };
         tt_data.value = if tt_hit {
-            value_from_tt(tt_data.value, ss_slice[ss_idx].ply, pos.rule50_count() as i32)
+            value_from_tt(tt_data.value, ply, pos.rule50_count() as i32)
         } else {
             VALUE_NONE
         };
@@ -1678,17 +1676,17 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
         let mut best_value: Value;
         let mut futility_base = -VALUE_INFINITE;
 
-        if ss_slice[ss_idx].in_check {
+        if in_check {
             best_value = -VALUE_INFINITE;
         } else {
-            let correction_val = correction_value(shared_history, pos, ss_slice, ss_idx);
-            if ss_slice[ss_idx].tt_hit {
+            let correction_val = correction_value(shared_history, pos, ss);
+            if tt_hit {
                 unadjusted_static_eval = tt_data.eval;
                 if !is_valid(unadjusted_static_eval) {
                     unadjusted_static_eval = self.evaluate(pos);
                 }
-                ss_slice[ss_idx].static_eval = to_corrected_static_eval(unadjusted_static_eval, correction_val);
-                best_value = ss_slice[ss_idx].static_eval;
+                (*ss).static_eval = to_corrected_static_eval(unadjusted_static_eval, correction_val);
+                best_value = (*ss).static_eval;
 
                 if is_valid(tt_data.value) && !is_decisive(tt_data.value)
                     && ((tt_data.bound as u8) & (if tt_data.value > best_value { Bound::Lower as u8 } else { Bound::Upper as u8 })) != 0
@@ -1697,13 +1695,13 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
                 }
             } else {
                 unadjusted_static_eval = self.evaluate(pos);
-                ss_slice[ss_idx].static_eval = to_corrected_static_eval(unadjusted_static_eval, correction_val);
-                best_value = ss_slice[ss_idx].static_eval;
+                (*ss).static_eval = to_corrected_static_eval(unadjusted_static_eval, correction_val);
+                best_value = (*ss).static_eval;
             }
 
             if best_value >= beta {
                 best_value = (441 * best_value + 583 * beta) / 1024;
-                if !ss_slice[ss_idx].tt_hit {
+                if !tt_hit {
                     tt_writer.write(
                         pos_key,
                         VALUE_NONE,
@@ -1722,33 +1720,22 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
                 alpha = best_value;
             }
 
-            futility_base = ss_slice[ss_idx].static_eval + 306;
+            futility_base = (*ss).static_eval + 306;
         }
 
-        let cont_hist: [*const PieceToHistory; 6] = [
-            ss_slice[ss_idx - 1].continuation_history,
-            std::ptr::null(),
-            std::ptr::null(),
-            std::ptr::null(),
-            std::ptr::null(),
-            std::ptr::null(),
-        ];
-        let prev_sq = if ss_slice[ss_idx - 1].current_move.is_ok() {
-            ss_slice[ss_idx - 1].current_move.to_sq()
+        let prev_sq = if (*ss_m1).current_move.is_ok() {
+            (*ss_m1).current_move.to_sq()
         } else {
             Square::SqNone
         };
 
-        let mut mp = MovePicker::new(
+        let ch0 = (*ss_m1).continuation_history;
+        let mut mp = MovePicker::new_qsearch(
             pos,
             tt_data.move_,
-            DEPTH_QS,
             &self.main_history,
-            &self.low_ply_history,
             &self.capture_history,
-            &cont_hist,
-            shared_history,
-            ss_slice[ss_idx].ply,
+            &ch0,
         );
 
         loop {
@@ -1767,7 +1754,7 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
                         continue;
                     }
 
-                    let futility_value = futility_base + PIECE_VALUE[pos.piece_on(m.to_sq()) as usize];
+                    let futility_value = futility_base + *PIECE_VALUE.get_unchecked(pos.piece_on(m.to_sq()) as usize);
                     if futility_value <= alpha {
                         best_value = best_value.max(futility_value);
                         continue;
@@ -1791,8 +1778,8 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
             if PV_NODE {
                 pv.clear();
             }
-            self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history);
-            let value = -self.qsearch::<PV_NODE>(pos, ss_slice, ss_idx + 1, -beta, -alpha, tt, shared_history);
+            self.do_move(pos, m, gives_check, capture, ss, tt, shared_history);
+            let value = -self.qsearch::<PV_NODE>(pos, ss_p1, -beta, -alpha, tt, shared_history);
             self.undo_move(pos, m);
 
             if value > best_value {
@@ -1802,10 +1789,8 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
                     best_move = m;
 
                     if PV_NODE {
-                        unsafe {
-                            if !ss_slice[ss_idx].pv.is_null() {
-                                (*ss_slice[ss_idx].pv).update(m, Some(&pv));
-                            }
+                        if !(*ss).pv.is_null() {
+                            (*(*ss).pv).update(m, Some(&pv));
                         }
                     }
 
@@ -1819,8 +1804,8 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
         }
 
         if move_count == 0 {
-            if ss_slice[ss_idx].in_check {
-                return mated_in(ss_slice[ss_idx].ply);
+            if in_check {
+                return mated_in(ply);
             }
 
             let us = pos.side_to_move();
@@ -1839,7 +1824,7 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
 
         tt_writer.write(
             pos_key,
-            value_to_tt(best_value, ss_slice[ss_idx].ply),
+            value_to_tt(best_value, ply),
             pv_hit,
             if best_value >= beta { Bound::Lower } else { Bound::Upper },
             DEPTH_QS,
@@ -1857,22 +1842,28 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
             return;
         }
         let mut pv = PVMoves::default();
-        let mut stack = [Stack::default(); MAX_PLY + 10];
+        // Leading padding: 7 slots before ply 0 so ss.sub(1).sub(6) (i.e. ss.sub(7))
+        // is strictly in-bounds and initialized at ply == 0.
+        // Trailing padding: 4 slots after MAX_PLY so ss.add(2) at MAX_PLY is in-bounds.
+        const SS_OFFSET: usize = 7;
+        const STACK_LEN: usize = MAX_PLY + SS_OFFSET + 5;
+        const _: () = assert!(SS_OFFSET >= 7);
+        const _: () = assert!(SS_OFFSET + MAX_PLY + 3 < STACK_LEN);
 
-        // ss starts at stack[7]
-        let ss_idx = 7;
+        let mut stack = [Stack::default(); STACK_LEN];
+        let ss_idx = SS_OFFSET;
 
         let default_cch: *mut [[StatsEntry<CORRECTION_HISTORY_LIMIT>; SQUARE_NB]; PIECE_NB] =
             &mut self.continuation_correction_history[Piece::NoPiece as usize][0] as *mut _;
 
-        for i in 1..=7 {
+        for i in 1..=SS_OFFSET {
             stack[ss_idx - i].continuation_history =
                 &shared_history.continuation_history[0][0][Piece::NoPiece as usize][0];
             stack[ss_idx - i].continuation_correction_history = default_cch;
             stack[ss_idx - i].static_eval = VALUE_NONE;
         }
 
-        for i in 0..=(MAX_PLY + 2) {
+        for i in 0..=(MAX_PLY + 3) {
             stack[ss_idx + i].ply = i;
         }
 
@@ -1904,37 +1895,38 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
         let multi_pv = 1.min(self.root_moves.len());
 
         let mut search_again_counter = 0;
-        let mut increase_depth = true;
         let mut fail_high_recovery = 0;
         let mut time_reduction = 1.0_f64;
         let mut tot_best_move_changes = 0.0_f64;
         let mut iter_idx = 0usize;
         let mut last_best_move_depth: Depth = 0;
-        let mut last_best_move_pv: Vec<Move> = Vec::new();
+        let mut last_best_move_pv: Vec<Move> = Vec::with_capacity(64);
         let mut last_best_move_score: Value = -VALUE_INFINITE;
         let mut best_value: Value;
 
-        let mut root_pos = std::mem::replace(&mut self.root_pos, Position::new());
+        let mut root_pos = std::mem::replace(&mut self.root_pos, Position::empty_placeholder());
+        let ss_root = unsafe { stack.as_mut_ptr().add(ss_idx) };
 
         while self.root_depth + 1 < MAX_PLY as i32
-            && !self.stop.load(Ordering::Relaxed)
+            && !self.shared_ctrl.stop.load(Ordering::Relaxed)
             && !(self.limits.depth != 0 && self.is_mainthread() && self.root_depth >= self.limits.depth)
         {
             self.root_depth += 1;
             let seek_mate_threshold = 750 + 220000 / (self.root_depth * self.root_depth);
 
             for i in 0..self.root_moves.len() {
-                self.root_moves[i].previous_score = self.root_moves[i].score;
-                self.root_moves[i].previous_pv = self.root_moves[i].pv.clone();
-                self.root_moves[i].previous_score_exact = i < multi_pv;
+                let rm = &mut self.root_moves[i];
+                rm.previous_score = rm.score;
+                rm.previous_pv.clone_from(&rm.pv);
+                rm.previous_score_exact = i < multi_pv;
             }
 
-            if !increase_depth {
+            if !self.shared_ctrl.increase_depth.load(Ordering::Relaxed) {
                 search_again_counter += 1;
             }
 
             self.pv_idx = 0;
-            self.last_iteration_idx_pv = self.root_moves[self.pv_idx].previous_pv.clone();
+            self.last_iteration_idx_pv.clone_from(&self.root_moves[self.pv_idx].previous_pv);
             self.sel_depth = 0;
 
             let mut delta = 5 + (self.thread_idx % 8) as i32 + (self.root_moves[self.pv_idx].mean_squared_score.abs() / 10193) as i32;
@@ -1955,21 +1947,22 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
             loop {
                 let adjusted_depth = 1.max(self.root_depth - failed_high_cnt - fail_high_recovery - 3 * (search_again_counter + 1) / 4);
 
-                best_value = self.search::<true, true>(
-                    &mut root_pos,
-                    &mut stack,
-                    ss_idx,
-                    alpha,
-                    beta,
-                    adjusted_depth,
-                    false,
-                    tt,
-                    shared_history,
-                );
+                best_value = unsafe {
+                    self.search::<true, true>(
+                        &mut root_pos,
+                        ss_root,
+                        alpha,
+                        beta,
+                        adjusted_depth,
+                        false,
+                        tt,
+                        shared_history,
+                    )
+                };
 
                 self.root_moves.sort();
 
-                if self.stop.load(Ordering::Relaxed) {
+                if self.shared_ctrl.stop.load(Ordering::Relaxed) {
                     break;
                 }
 
@@ -1992,7 +1985,7 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
                 fail_high_recovery = (failed_high_cnt + 1) / 2 + 2;
             }
 
-            let stopped = self.stop.load(Ordering::Relaxed);
+            let stopped = self.shared_ctrl.stop.load(Ordering::Relaxed);
             if !stopped {
                 if self.is_mainthread() {
                     self.output_pv(&root_pos, self.root_depth, tt);
@@ -2000,7 +1993,7 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
                 if last_best_move_pv.is_empty() || last_best_move_pv[0] != self.root_moves[0].pv[0] {
                     last_best_move_depth = self.root_depth;
                 }
-                last_best_move_pv = self.root_moves[0].pv.clone();
+                last_best_move_pv.clone_from(&self.root_moves[0].pv);
                 last_best_move_score = self.root_moves[0].score;
             } else {
                 if self.root_moves[0].score == -VALUE_INFINITE && !last_best_move_pv.is_empty() {
@@ -2010,7 +2003,7 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
                     }
                     self.root_moves[0].score = last_best_move_score;
                     self.root_moves[0].uci_score = last_best_move_score;
-                    self.root_moves[0].pv = last_best_move_pv.clone();
+                    self.root_moves[0].pv.clone_from(&last_best_move_pv);
                 }
                 if self.is_mainthread() && !self.root_moves.is_empty() && self.root_moves[0].score != -VALUE_INFINITE {
                     self.output_pv(&root_pos, (self.root_depth - 1).max(1), tt);
@@ -2019,8 +2012,8 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
             }
 
             if self.is_mainthread() {
-                if self.limits.use_time_management() && !self.stop.load(Ordering::Relaxed) {
-                    let nodes_effort = self.root_moves[0].effort * 100000 / self.nodes.max(1);
+                if self.limits.use_time_management() && !self.shared_ctrl.stop.load(Ordering::Relaxed) {
+                    let nodes_effort = self.root_moves[0].effort * 100000 / self.nodes.load().max(1);
                     let falling_eval = ((11.48
                         + 2.30 * (self.best_previous_average_score - best_value) as f64
                         + 1.1 * (self.iter_value[iter_idx] - best_value) as f64)
@@ -2036,10 +2029,9 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
                     let reduction = (1.468 + self.previous_time_reduction) / (2.284 * time_reduction);
 
                     tot_best_move_changes /= 2.0;
-                    tot_best_move_changes += self.best_move_changes as f64;
-                    self.best_move_changes = 0;
+                    tot_best_move_changes += self.shared_ctrl.take_best_move_changes() as f64;
 
-                    let best_move_instability = 1.077 + 2.229 * tot_best_move_changes;
+                    let best_move_instability = 1.077 + 2.229 * tot_best_move_changes / self.shared_ctrl.threads_count as f64;
                     let high_best_move_effort = interp(nodes_effort as f64, 75800.0, 104510.0, 0.969, 0.714)
                         .clamp(0.693, 0.838);
 
@@ -2050,21 +2042,21 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
                         total_time = total_time.min(500.0 * self.limits.npmsec.max(1) as f64);
                     }
 
-                    let elapsed_time = self.tm.elapsed(|| self.nodes) as f64;
+                    let elapsed_time = self.tm.elapsed(|| self.shared_ctrl.nodes_searched()) as f64;
                     if elapsed_time > total_time.min(self.tm.maximum() as f64)
                         || self.root_moves[0].score >= mate_in(3)
                         || self.root_moves[0].score == mated_in(2)
                     {
-                        self.stop.store(true, Ordering::Relaxed);
+                        self.shared_ctrl.stop.store(true, Ordering::Relaxed);
                     } else {
-                        increase_depth = elapsed_time <= total_time * 0.50;
+                        self.shared_ctrl.increase_depth.store(elapsed_time <= total_time * 0.50, Ordering::Relaxed);
                     }
                 } else {
-                    let elapsed = self.tm.elapsed(|| self.nodes);
+                    let elapsed = self.tm.elapsed(|| self.shared_ctrl.nodes_searched());
                     if self.limits.movetime != 0 && elapsed >= self.limits.movetime {
-                        self.stop.store(true, Ordering::Relaxed);
-                    } else if self.limits.nodes != 0 && self.nodes >= self.limits.nodes {
-                        self.stop.store(true, Ordering::Relaxed);
+                        self.shared_ctrl.stop.store(true, Ordering::Relaxed);
+                    } else if self.limits.nodes != 0 && self.shared_ctrl.nodes_searched() >= self.limits.nodes {
+                        self.shared_ctrl.stop.store(true, Ordering::Relaxed);
                     }
                 }
 
@@ -2085,9 +2077,13 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
     }
 
     pub fn output_pv(&self, root_pos: &Position, depth: Depth, tt: &TranspositionTable) {
-        self.thread_nodes[self.thread_idx].0.store(self.nodes, Ordering::Relaxed);
-        let total_nodes: u64 = self.thread_nodes.iter().map(|tn| tn.0.load(Ordering::Relaxed)).sum();
-        let rm = &self.root_moves[0];
+        self.output_pv_for(self, root_pos, depth, tt);
+    }
+
+    pub fn output_pv_for(&self, src_worker: &Worker, root_pos: &Position, depth: Depth, tt: &TranspositionTable) {
+        let total_nodes = self.shared_ctrl.nodes_searched();
+        let total_tb_hits = self.shared_ctrl.tb_hits();
+        let rm = &src_worker.root_moves[0];
         let elapsed = 1.max(self.tm.elapsed_time());
         let nps = total_nodes * 1000 / elapsed as u64;
 
@@ -2116,7 +2112,7 @@ self.do_move(pos, m, gives_check, capture, ss_slice, ss_idx, tt, shared_history)
             total_nodes,
             nps,
             tt.hashfull(0),
-            self.tb_hits,
+            total_tb_hits,
             elapsed,
             pv_str
         );
@@ -2134,7 +2130,7 @@ mod tests {
         pos.set(START_FEN, false).unwrap();
         let limits = LimitsType { depth: 10, ..LimitsType::default() };
         pool.start_thinking(&pos, limits);
-        assert_eq!(pool.main_worker().nodes, 4543);
+        assert_eq!(pool.main_worker().nodes.load(), 4543);
     }
 
     #[test]
@@ -2148,6 +2144,78 @@ mod tests {
         pool.start_thinking(&pos, limits);
         assert_eq!(pool.main_worker().root_moves[0].pv[0], m_nc3);
         assert_eq!(pool.main_worker().root_moves[0].score, 25);
-        assert_eq!(pool.main_worker().nodes, 20);
+        assert_eq!(pool.main_worker().nodes.load(), 20);
+    }
+
+    #[test]
+    fn test_position_cur_state_pointer_safety() {
+        fn move_by_value(p: Position) -> Position {
+            p
+        }
+
+        let mut pos = Position::new();
+        pos.set(START_FEN, false).unwrap();
+        let start_key = pos.key();
+
+        // Move by value, clone, and copy_from
+        let mut moved = move_by_value(pos);
+        assert_eq!(moved.key(), start_key);
+
+        let e2e4 = crate::uci::parse_move(&mut moved, "e2e4").unwrap();
+        let e7e5 = {
+            moved.do_move(e2e4, false, None);
+            crate::uci::parse_move(&mut moved, "e7e5").unwrap()
+        };
+        moved.do_move(e7e5, false, None);
+        let after_2_key = moved.key();
+
+        // Clone after moves + move by value
+        let cloned = move_by_value(moved.clone());
+        assert_eq!(cloned.key(), after_2_key);
+
+        // copy_from into an empty_placeholder and into an existing Position
+        let mut copy1 = Position::empty_placeholder();
+        copy1.copy_from(&cloned);
+        assert_eq!(copy1.key(), after_2_key);
+
+        // Force state_stack reallocation via ensure_capacity and verify cur_state stays valid
+        copy1.ensure_capacity(2048);
+        assert_eq!(copy1.key(), after_2_key);
+        copy1.do_null_move();
+        assert_ne!(copy1.key(), after_2_key);
+        copy1.undo_null_move();
+        assert_eq!(copy1.key(), after_2_key);
+        copy1.undo_move(e7e5);
+        copy1.undo_move(e2e4);
+        assert_eq!(copy1.key(), start_key);
+    }
+
+    #[test]
+    fn test_dynamic_uci_resize_and_smp() {
+        let mut pool = crate::thread::ThreadPool::new(1, 16);
+        let mut pos = Position::new();
+        pos.set(START_FEN, false).unwrap();
+
+        // Resize Hash: 16 -> 512 -> 128 MB and Threads: 1 -> 16 -> 4 -> 8 -> 1
+        let steps: &[(usize, usize, i32)] = &[
+            (16, 1, 8),
+            (512, 16, 8),
+            (128, 4, 8),
+            (128, 8, 8),
+            (16, 1, 10),
+        ];
+
+        for &(hash_mb, threads, depth) in steps {
+            pool.set_hash(hash_mb);
+            pool.set_threads(threads);
+            pool.clear();
+            let limits = LimitsType { depth, ..LimitsType::default() };
+            pool.start_thinking(&pos, limits);
+            let bm = pool.best_move();
+            assert!(bm.is_ok(), "best move must be valid for Hash={} Threads={}", hash_mb, threads);
+        }
+
+        // Verify exact single-thread parity still holds after all dynamic resizes
+        assert_eq!(pool.main_worker().nodes.load(), 4543);
     }
 }

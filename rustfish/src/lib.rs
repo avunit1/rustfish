@@ -1,4 +1,5 @@
 pub mod types;
+pub mod memory;
 pub mod bitboard;
 pub mod attacks;
 pub mod position;

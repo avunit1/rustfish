@@ -1,4 +1,5 @@
 use core::sync::atomic::{AtomicI16, AtomicU16, AtomicU64, AtomicU8, Ordering};
+use crate::memory::{CachePadded, PageAlignedSlice};
 use crate::types::*;
 
 pub const GENERATION_BITS: u8 = 5;
@@ -91,6 +92,8 @@ pub struct Cluster {
     pub entry: [TTEntry; CLUSTER_SIZE],
 }
 
+const _: () = assert!(core::mem::size_of::<Cluster>() == 32);
+
 impl Cluster {
     pub const fn new() -> Self {
         Self {
@@ -126,9 +129,7 @@ impl<'a> TTWriter<'a> {
         let shift = KEY_BITS * self.index;
         let keys = self.cluster.keys.load(Ordering::Relaxed);
         let key_diff = ((keys >> shift) ^ k) & KEY_MASK;
-        let entry = &self.cluster.entry[self.index];
-
-
+        let entry = unsafe { self.cluster.entry.get_unchecked(self.index) };
 
         if m != Move::none() || key_diff != 0 {
             entry.move16.store(m.raw(), Ordering::Relaxed);
@@ -174,7 +175,7 @@ impl<'a> TTWriter<'a> {
 
     #[inline(always)]
     pub fn penalize(&self, penalty: i32) {
-        let entry = &self.cluster.entry[self.index];
+        let entry = unsafe { self.cluster.entry.get_unchecked(self.index) };
         let d = entry.depth8.load(Ordering::Relaxed) as i32;
         entry
             .depth8
@@ -183,41 +184,53 @@ impl<'a> TTWriter<'a> {
 }
 
 pub struct TranspositionTable {
-    table: Vec<Cluster>,
+    table: PageAlignedSlice<Cluster>,
     cluster_count: usize,
-    generation8: AtomicU8,
+    generation8: CachePadded<AtomicU8>,
 }
 
 impl TranspositionTable {
     pub fn new(mb_size: usize) -> Self {
-        let cluster_count = (mb_size * 1024 * 1024) / std::mem::size_of::<Cluster>();
-        let mut table = Vec::with_capacity(cluster_count);
-        for _ in 0..cluster_count {
-            table.push(Cluster::new());
-        }
+        let cluster_count = ((mb_size.max(1)) * 1024 * 1024) / std::mem::size_of::<Cluster>();
+        let table = PageAlignedSlice::new_large_pages_zeroed(cluster_count);
         Self {
             table,
             cluster_count,
-            generation8: AtomicU8::new(0),
+            generation8: CachePadded::new(AtomicU8::new(0)),
         }
     }
 
     pub fn resize(&mut self, mb_size: usize) {
-        self.cluster_count = (mb_size * 1024 * 1024) / std::mem::size_of::<Cluster>();
-        self.table = Vec::with_capacity(self.cluster_count);
-        for _ in 0..self.cluster_count {
-            self.table.push(Cluster::new());
-        }
-        self.clear();
+        let cluster_count = ((mb_size.max(1)) * 1024 * 1024) / std::mem::size_of::<Cluster>();
+        self.cluster_count = cluster_count;
+        // Allocate minimal dummy first so old buffer is freed before allocating new one
+        self.table = PageAlignedSlice::new_zeroed(1);
+        self.table = PageAlignedSlice::new_large_pages_zeroed(cluster_count);
+        self.generation8.store(0, Ordering::Relaxed);
     }
 
     pub fn clear(&self) {
         self.generation8.store(0, Ordering::Relaxed);
+        self.clear_range(0, 1);
+    }
+
+    pub fn reset_generation(&self) {
+        self.generation8.store(0, Ordering::Relaxed);
+    }
+
+    pub fn clear_range(&self, thread_idx: usize, thread_count: usize) {
+        let stride = self.cluster_count / thread_count;
+        let start = stride * thread_idx;
+        let len = if thread_idx + 1 != thread_count {
+            stride
+        } else {
+            self.cluster_count - start
+        };
         unsafe {
             core::ptr::write_bytes(
-                self.table.as_ptr() as *mut u8,
+                self.table.as_ptr().add(start) as *mut u8,
                 0,
-                self.table.len() * core::mem::size_of::<Cluster>(),
+                len * core::mem::size_of::<Cluster>(),
             );
         }
     }
@@ -237,9 +250,10 @@ impl TranspositionTable {
         let mut cnt = 0;
         let limit = 1000.min(self.cluster_count);
         let gen = self.generation();
+        let slice = self.table.as_slice();
         for i in 0..limit {
             for j in 0..CLUSTER_SIZE {
-                let e = &self.table[i].entry[j];
+                let e = &slice[i].entry[j];
                 if e.is_occupied() && (e.relative_age(gen) as i32) <= max_age {
                     cnt += 1;
                 }
@@ -265,7 +279,6 @@ impl TranspositionTable {
 
     #[inline(always)]
     pub fn probe(&self, key: Key) -> (bool, TTData, TTWriter<'_>) {
-
         let cluster = self.get_cluster(key);
         let key21 = key & KEY_MASK;
 
@@ -276,12 +289,12 @@ impl TranspositionTable {
         let matches = (key_xors.wrapping_sub(KEY_LSB)) & !key_xors & KEY_MSB;
 
         if matches != 0 {
-            let i = ((matches.trailing_zeros() as i32) >> 4) - 1;
-            let entry = &cluster.entry[i as usize];
+            let i = (((matches.trailing_zeros() as i32) >> 4) - 1) as usize;
+            let entry = unsafe { cluster.entry.get_unchecked(i) };
             return (
                 entry.is_occupied(),
                 entry.read(),
-                TTWriter::new(cluster, i as usize),
+                TTWriter::new(cluster, i),
             );
         }
 

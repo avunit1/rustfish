@@ -435,7 +435,8 @@ impl Network {
         let many = officers(Color::White).max(officers(Color::Black)) >= 2;
 
         let raw_idx = ((band * 4 + queens) * 3 + layout) * 2 + (many as usize);
-        self.layer_stack_index[raw_idx] as usize
+        debug_assert!(raw_idx < RAW_LAYER_STACKS);
+        unsafe { *self.layer_stack_index.get_unchecked(raw_idx) as usize }
     }
 
     #[inline(never)]

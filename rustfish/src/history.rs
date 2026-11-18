@@ -1,4 +1,5 @@
 use std::sync::atomic::{AtomicI16, Ordering};
+use crate::memory::{PageAlignedBox, PageAlignedSlice};
 use crate::types::*;
 use crate::position::Position;
 
@@ -86,6 +87,7 @@ pub type ContinuationHistoryBlock = [[[[PieceToHistory; SQUARE_NB]; PIECE_NB]; 2
 pub type ContinuationCorrectionHistory = Box<[[[[StatsEntry<CORRECTION_HISTORY_LIMIT>; SQUARE_NB]; PIECE_NB]; SQUARE_NB]; PIECE_NB]>;
 pub type TTMoveHistory = StatsEntry<8192>;
 
+#[repr(C)]
 pub struct CorrectionBundle {
     pub pawn: AtomicStatsEntry<CORRECTION_HISTORY_LIMIT>,
     pub minor: AtomicStatsEntry<CORRECTION_HISTORY_LIMIT>,
@@ -103,6 +105,7 @@ impl CorrectionBundle {
         }
     }
 
+    #[inline(always)]
     pub fn set(&self, val: i16) {
         self.pawn.set(val);
         self.minor.set(val);
@@ -112,69 +115,38 @@ impl CorrectionBundle {
 }
 
 pub struct SharedHistories {
-    pub correction_history: Vec<[CorrectionBundle; COLOR_NB]>,
-    pub continuation_history: Box<[[[[PieceToHistory; SQUARE_NB]; PIECE_NB]; 2]; 2]>,
-    pub pawn_history: Vec<[[AtomicStatsEntry<8192>; SQUARE_NB]; PIECE_NB]>,
+    pub correction_history: PageAlignedSlice<[CorrectionBundle; COLOR_NB]>,
+    pub continuation_history: PageAlignedBox<ContinuationHistoryBlock>,
+    pub pawn_history: PageAlignedSlice<[[AtomicStatsEntry<8192>; SQUARE_NB]; PIECE_NB]>,
     size_minus1: usize,
     pawn_hist_size_minus1: usize,
 }
 
 impl SharedHistories {
-    pub fn new(thread_count: usize) -> Self {
+    /// Allocates page-aligned backing memory without serial initialization;
+    /// callers must invoke `clear_range` across worker threads (or `clear`) before search.
+    pub fn new_uninit(thread_count: usize) -> Self {
         let tc = if thread_count == 0 { 1 } else { thread_count.next_power_of_two() };
         let corr_size = CORRHIST_BASE_SIZE * tc;
         let pawn_size = PAWN_HISTORY_BASE_SIZE * tc;
 
-        let mut correction_history = Vec::with_capacity(corr_size);
-        for _ in 0..corr_size {
-            correction_history.push([
-                CorrectionBundle::new(-5),
-                CorrectionBundle::new(-5),
-            ]);
-        }
-
-        let mut pawn_history = Vec::with_capacity(pawn_size);
-        for _ in 0..pawn_size {
-            let entry: [[AtomicStatsEntry<8192>; SQUARE_NB]; PIECE_NB] = unsafe {
-                std::mem::zeroed()
-            };
-            for p in 0..PIECE_NB {
-                for s in 0..SQUARE_NB {
-                    entry[p][s].set(-1338);
-                }
-            }
-            pawn_history.push(entry);
-        }
-
-        // 2 * 2 * 16 * 64 * 16 * 64 AtomicStatsEntry<30000>
-        // Allocated directly on heap via Box
-        let cont_hist: Box<[[[[PieceToHistory; SQUARE_NB]; PIECE_NB]; 2]; 2]> = unsafe {
-            let layout = std::alloc::Layout::new::<[[[[PieceToHistory; SQUARE_NB]; PIECE_NB]; 2]; 2]>();
-            let ptr = std::alloc::alloc_zeroed(layout) as *mut [[[[PieceToHistory; SQUARE_NB]; PIECE_NB]; 2]; 2];
-            assert!(!ptr.is_null(), "Failed to allocate ContinuationHistoryBlock");
-            for in_check in 0..2 {
-                for capture in 0..2 {
-                    for prev_p in 0..PIECE_NB {
-                        for prev_s in 0..SQUARE_NB {
-                            for curr_p in 0..PIECE_NB {
-                                for curr_s in 0..SQUARE_NB {
-                                    (*ptr)[in_check][capture][prev_p][prev_s][curr_p][curr_s].set(-586);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            Box::from_raw(ptr)
-        };
+        let correction_history = PageAlignedSlice::new_large_pages_zeroed(corr_size);
+        let pawn_history = PageAlignedSlice::new_large_pages_zeroed(pawn_size);
+        let continuation_history = PageAlignedBox::new_large_pages_zeroed();
 
         Self {
             correction_history,
-            continuation_history: cont_hist,
+            continuation_history,
             pawn_history,
             size_minus1: corr_size - 1,
             pawn_hist_size_minus1: pawn_size - 1,
         }
+    }
+
+    pub fn new(thread_count: usize) -> Self {
+        let sh = Self::new_uninit(thread_count);
+        sh.clear_range(0, 1);
+        sh
     }
 
     #[inline(always)]
@@ -227,31 +199,58 @@ impl SharedHistories {
         }
     }
 
-    pub fn clear(&mut self) {
-        for entry in &mut self.correction_history {
+    /// Parallel slice clear matching C++ Stockfish's `Worker::clear()`!
+    /// Each thread clears its own contiguous slice of `correction_history` and `pawn_history`;
+    /// thread 0 also clears `continuation_history`.
+    pub fn clear_range(&self, thread_idx: usize, thread_count: usize) {
+        let corr_len = self.correction_history.len();
+        let corr_start = (thread_idx as u64 * corr_len as u64 / thread_count as u64) as usize;
+        let corr_end = if thread_idx + 1 == thread_count {
+            corr_len
+        } else {
+            ((thread_idx + 1) as u64 * corr_len as u64 / thread_count as u64) as usize
+        };
+        let corr_slice = self.correction_history.as_slice();
+        for entry in &corr_slice[corr_start..corr_end] {
             entry[0].set(-5);
             entry[1].set(-5);
         }
-        for entry in &mut self.pawn_history {
+
+        let pawn_len = self.pawn_history.len();
+        let pawn_start = (thread_idx as u64 * pawn_len as u64 / thread_count as u64) as usize;
+        let pawn_end = if thread_idx + 1 == thread_count {
+            pawn_len
+        } else {
+            ((thread_idx + 1) as u64 * pawn_len as u64 / thread_count as u64) as usize
+        };
+        let pawn_slice = self.pawn_history.as_slice();
+        for entry in &pawn_slice[pawn_start..pawn_end] {
             for p in 0..PIECE_NB {
                 for s in 0..SQUARE_NB {
                     entry[p][s].set(-1338);
                 }
             }
         }
-        for in_check in 0..2 {
-            for capture in 0..2 {
-                for prev_p in 0..PIECE_NB {
-                    for prev_s in 0..SQUARE_NB {
-                        for curr_p in 0..PIECE_NB {
-                            for curr_s in 0..SQUARE_NB {
-                                self.continuation_history[in_check][capture][prev_p][prev_s][curr_p][curr_s].set(-586);
+
+        if thread_idx == 0 {
+            for in_check in 0..2 {
+                for capture in 0..2 {
+                    for prev_p in 0..PIECE_NB {
+                        for prev_s in 0..SQUARE_NB {
+                            for curr_p in 0..PIECE_NB {
+                                for curr_s in 0..SQUARE_NB {
+                                    self.continuation_history[in_check][capture][prev_p][prev_s][curr_p][curr_s].set(-586);
+                                }
                             }
                         }
                     }
                 }
             }
         }
+    }
+
+    pub fn clear(&self) {
+        self.clear_range(0, 1);
     }
 }
 

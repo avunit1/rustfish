@@ -18,7 +18,7 @@ pub const RAW_LAYER_STACKS: usize = 192;
 pub const LAYER_STACKS: usize = RAW_LAYER_STACKS;
 
 #[rustfmt::skip]
-pub const ORIENT_TBL: [u8; 64] = [
+pub const ORIENT_TBL_DATA: [u8; 64] = [
     7, 7, 7, 7, 0, 0, 0, 0,
     7, 7, 7, 7, 0, 0, 0, 0,
     7, 7, 7, 7, 0, 0, 0, 0,
@@ -28,6 +28,8 @@ pub const ORIENT_TBL: [u8; 64] = [
     7, 7, 7, 7, 0, 0, 0, 0,
     7, 7, 7, 7, 0, 0, 0, 0,
 ];
+
+pub static ORIENT_TBL: [u8; 64] = ORIENT_TBL_DATA;
 
 pub const PACKUS_EPI16_ORDER: [usize; 8] = [0, 2, 1, 3, 4, 6, 5, 7];
 pub const WIDENING_PAIR_ORDER: [usize; 4] = [0, 2, 1, 3];

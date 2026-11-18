@@ -19,15 +19,16 @@
 | `types.h` | `types.rs` | Primitive types (`Square`, `Piece`, `PieceType`, `Color`, `Move`, `Value`, `Depth`, `CastlingRights`, `Bound`), `DirtyPiece`, `DirtyThreat`, `DirtyThreats`, `DirtyPawnPairs`, `Dirties`. |
 | `bitboard.h`, `bitboard.cpp` | `bitboard.rs` | 64-bit bitboard constants (`FileABB`..`FileHBB`, `Rank1BB`..`Rank8BB`), bit manipulation (`lsb`, `msb`, `popcount`, `pop_lsb`), ray shifts. |
 | `attacks.h`, `attacks.cpp` | `attacks.rs` | AVX2 `DualMagic` hyperbola quintessence slider attacks (`both_attacks_bb`), lookup tables (`LineBB`, `BetweenBB`, `inverse_RayPassBB`, `DiagBB`, `AntiDiagBB`), step attacks (`knight_attack`, `king_attack`, `pawn_attacks_bb`). |
-| `position.h`, `position.cpp` | `position.rs` | `StateInfo`, `Position`, FEN parser/serializer, `do_move`, `undo_move`, `do_null_move`, `undo_null_move`, `see_ge`, Zobrist hashing (`adjust_key50`), checker/blocker detection. |
-| `movegen.h`, `movegen.cpp` | `movegen.rs` | Zero-allocation legal move generator (`generate<CAPTURES>`, `generate<QUIETS>`, `generate<EVASIONS>`, `generate<ALL>`). Stack-allocated `MoveList`. |
+| `position.h`, `position.cpp` | `position.rs` | `#[repr(C)]` `StateInfo` (64-byte copied prefix), `Position` with cached `cur_state: *mut StateInfo`, FEN parser/serializer, `do_move`, `undo_move`, `do_null_move`, `undo_null_move`, `see_ge`, Zobrist hashing, checker/blocker detection. |
+| `movegen.h`, `movegen.cpp` | `movegen.rs` | Zero-allocation monomorphized legal move generator (`generate_moves_for<GEN>`). Stack-allocated `MoveList` / `MaybeUninit<Move>` buffers. |
 | `perft.h` | `perft.rs` (or in tests) | Perft leaf-node counting engine to validate move generation against test positions. |
-| `history.h` | `history.rs` | History statistics tables (`StatsEntry`, `ButterflyHistory`, `LowPlyHistory`, `CapturePieceToHistory`, `PieceToHistory`, `ContinuationHistory`, `PawnHistory`, `CorrectionHistory`, `SharedHistories`). |
-| `tt.h`, `tt.cpp` | `tt.rs` | Transposition table with 32-byte `Cluster` (3 `TTEntry` + 64-bit packed 21-bit keys), `TTData`, `TTWriter`, lockless atomic probes/updates, `hashfull`, replacement scheme. |
-| `movepick.h`, `movepick.cpp` | `movepick.rs` | Staged move selector (`MovePicker`): TT move, good captures (MVV/LVA + SEE), good quiets (history scoring), bad moves, evasions, probcut. |
+| `memory.h`, `memory.cpp` | `memory.rs` | `CachePadded<T>` (64-byte alignment), non-locked `RelaxedAtomicU64`, cross-platform page-aligned & 2 MB large-page allocators (`PageAlignedSlice<T>`, `PageAlignedBox<T>`). |
+| `history.h` | `history.rs` | History statistics tables (`StatsEntry`, `ButterflyHistory`, `LowPlyHistory`, `CapturePieceToHistory`, `PieceToHistory`, `ContinuationHistory`, `PawnHistory`, `CorrectionHistory`, `SharedHistories` with parallel `clear_range` and large-page backing). |
+| `tt.h`, `tt.cpp` | `tt.rs` | Transposition table with 32-byte `Cluster` (3 `TTEntry` + 64-bit packed 21-bit keys), `TTData`, `TTWriter`, lockless atomic probes/updates, `CachePadded` generation, parallel `clear_range`, large-page backing, `hashfull`. |
+| `movepick.h`, `movepick.cpp` | `movepick.rs` | Staged move selector (`MovePicker`) with monomorphized `generate_and_score<GEN>`, `new_qsearch`, pointer-based continuation history, zero null-checks. |
 | `timeman.h`, `timeman.cpp` | `timeman.rs` | Time management calculation (`optimumTime`, `maximumTime`, nodes-as-time). |
-| `search.h`, `search.cpp` | `search.rs` | Principal Variation Search (`search`, `qsearch`), iterative deepening, aspiration windows, pruning (NMP, RFP, futility, SEE, singular extensions, late move reductions), SMP worker routines. |
-| `thread.h`, `thread.cpp`, `thread_native.h` | `thread.rs` | Lazy SMP ThreadPool, main thread coordination, worker synchronization, search stopping conditions. |
+| `search.h`, `search.cpp` | `search.rs` | Principal Variation Search (`search`, `qsearch`) using raw `ss: *mut Stack` (7 leading / 5 trailing sentinel slots), iterative deepening, aspiration windows, zero-alloc `RootMove` reuse, pruning/LMR/singular extensions, 64-byte aligned `Worker`. |
+| `thread.h`, `thread.cpp`, `thread_native.h` | `thread.rs` | Persistent Lazy SMP `ThreadPool` (`HelperThread` parked on `Mutex+Condvar`, first-touch worker allocation, cache-line isolated `SharedControl`, parallel `clear()`/`clear_tt()`, best-worker voting). |
 | `score.h`, `score.cpp` | `score.rs` | Centipawn score formatting, mate formatting, WDL conversion. |
 | `evaluate.h`, `evaluate.cpp` | `evaluate.rs` | Root evaluation function `evaluate()`, material scaling (`simple_eval`, `scale_evaluation` with optimism and rule50 dampening), trace string. |
 | `nnue/nnue_common.h` | `nnue/common.rs` | Constants (`OutputScale = 16`, `WeightScaleBits = 6`, `FtMaxVal = 255`, `HiddenOneVal = 128`), `OrientTBL`, byte ordering. |
@@ -116,10 +117,53 @@ pub struct ExtMove {
 
 pub struct MovePicker {
     // Embedded stack storage:
-    moves: [ExtMove; MAX_MOVES],
+    moves: [MaybeUninit<ExtMove>; MAX_MOVES],
     // ...
 }
 ```
+
+### 3.4 `StateInfo` Prefix Layout & `Position::cur_state`
+`StateInfo` is `#[repr(C)]` with all fields copied across plies packed into a contiguous 64-byte prefix (`STATE_COPY_BYTES = core::mem::offset_of!(StateInfo, key)`):
+```rust
+#[repr(C)]
+pub struct StateInfo {
+    // Copied prefix (64 bytes, 1 cache line) via ptr::copy_nonoverlapping:
+    pub material_key: Key,
+    pub pawn_key: Key,
+    pub minor_piece_key: Key,
+    pub non_pawn_key: [Key; COLOR_NB],
+    pub non_pawn_material: [Value; COLOR_NB],
+    pub castling_rights: u8,
+    pub ep_square: Square,
+    pub rule50: i32,
+    pub plies_from_null: i32,
+
+    // Recomputed per move (not copied in do_move):
+    pub key: Key,
+    pub checkers_bb: Bitboard,
+    pub blockers_for_king: [Bitboard; COLOR_NB],
+    pub pinners: [Bitboard; COLOR_NB],
+    pub check_squares: [Bitboard; PIECE_TYPE_NB],
+    pub threats: UnsafeCell<[Bitboard; PIECE_TYPE_NB]>,
+    pub captured_piece: Piece,
+    pub repetition: i32,
+    pub piece_placement: [u8; 32],
+}
+```
+`Position` keeps `state_stack: Vec<StateInfo>` and `state_idx: usize` private and caches `cur_state: *mut StateInfo` pointing directly to the active heap slot inside `state_stack`. Because `state_stack` resides on the heap, moving `Position` by value preserves pointer validity; every operation that can allocate or re-index (`new`, `clone`, `copy_from`, `ensure_capacity`, `set`, `do_move_inner`, `undo_move`, `do_null_move`, `undo_null_move`) updates `cur_state` immediately.
+
+### 3.5 Memory Allocation & Cache Isolation (`src/memory.rs`)
+- **`CachePadded<T>`** (`#[repr(C, align(64))]`): Isolates hot shared control fields (`stop`, `increase_depth`, TT `generation8`) onto separate 64-byte cache lines to prevent false sharing across SMT threads.
+- **`RelaxedAtomicU64`**: Single-writer / multi-reader counter whose `inc()` performs a relaxed load-add-store, compiling to a plain non-locked `add`/`inc` on x86-64 rather than hardware `LOCK XADD`.
+- **`PageAlignedSlice<T>` & `PageAlignedBox<T>`**:
+  - **Windows:** For large buffers (`TranspositionTable`, `SharedHistories`), dynamically resolves `advapi32.dll` (`OpenProcessToken`, `LookupPrivilegeValueA`, `AdjustTokenPrivileges`), temporarily enables `SeLockMemoryPrivilege`, rounds size up to `GetLargePageMinimum()`, and tries `VirtualAlloc(..., MEM_RESERVE | MEM_COMMIT | MEM_LARGE_PAGES, PAGE_READWRITE)`. Falls back cleanly to standard 4 KB `VirtualAlloc` if the privilege is unavailable; freed with `VirtualFree(..., MEM_RELEASE)`.
+  - **Linux:** Uses 2 MiB aligned `std::alloc::alloc_zeroed` + `madvise(..., MADV_HUGEPAGE)` for large buffers, 4 KB alignment otherwise, freed with matching `std::alloc::dealloc`.
+  - **macOS / other non-Windows:** Uses 4 KB page-aligned `std::alloc::alloc_zeroed` / `std::alloc::dealloc`.
+
+### 3.6 Persistent Lazy SMP `ThreadPool` (`src/thread.rs`)
+- **Persistent Worker Pool:** `HelperThread` spawns a dedicated OS thread (8 MiB stack) once per `set_threads` call, allocates and first-touches its `PageAlignedBox<Worker>` inside the helper thread's own OS execution context, and parks on a `(Mutex<JobState>, Condvar)` between jobs.
+- **Drop Order Safety:** `helpers: Vec<HelperThread>` is the first field of `ThreadPool`, guaranteeing all helper OS threads are signaled and joined before `main_worker`, `shared_history`, `tt`, or `shared_ctrl` are dropped.
+- **Lockless Coordination & Parallel Clear:** `SharedControl` holds cache-line-padded `stop`, `increase_depth`, and raw worker pointers for lockless node/TB-hit/best-move-change aggregation. `clear()` and `clear_tt()` partition `TranspositionTable` and `SharedHistories` clearing across all workers in parallel. On non-fixed-depth searches, `get_best_worker_idx()` applies Stockfish's depth + score voting scheme across all workers.
 
 ---
 

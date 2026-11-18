@@ -166,7 +166,7 @@ pub fn uci_loop() {
 
         match cmd {
             "uci" => {
-                println!("id name RustFish");
+                println!("id name RustFish {}", env!("CARGO_PKG_VERSION"));
                 println!("id author Google DeepMind / Antigravity");
                 println!("option name Hash type spin default 16 min 1 max 33554432");
                 println!("option name Threads type spin default 1 min 1 max 1024");
@@ -332,7 +332,7 @@ pub fn uci_loop() {
                 println!("bestmove {}", format_move(best_move, pos.is_chess960()));
             }
             "stop" => {
-                pool.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+                pool.set_stop(true);
             }
             "bench" => {
                 let tt_size = tokens.next().and_then(|s| s.parse().ok()).unwrap_or(16);

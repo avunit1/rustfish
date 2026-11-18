@@ -10,7 +10,7 @@ pub struct ZobristKeys {
     pub no_pawns: Key,
 }
 
-pub const ZOBRIST: ZobristKeys = {
+const ZOBRIST_DATA: ZobristKeys = {
     let mut psq = [[0u64; SQUARE_NB]; PIECE_NB];
     let mut enpassant = [0u64; FILE_NB];
     let mut castling = [0u64; CASTLING_RIGHT_NB];
@@ -90,6 +90,8 @@ pub const ZOBRIST: ZobristKeys = {
     }
 };
 
+pub static ZOBRIST: ZobristKeys = ZOBRIST_DATA;
+
 #[inline(always)]
 pub fn pack_pieces_into(board: &[Piece; SQUARE_NB], out: &mut [u8; 32]) {
     #[cfg(target_feature = "avx2")]
@@ -125,17 +127,20 @@ pub fn pack_pieces(board: &[Piece; SQUARE_NB]) -> [u8; 32] {
 
 use std::cell::UnsafeCell;
 
+#[repr(C)]
 pub struct StateInfo {
+    // Copied prefix in do_move / do_null_move (64 bytes, 1 cache line)
     pub material_key: Key,
     pub pawn_key: Key,
     pub minor_piece_key: Key,
     pub non_pawn_key: [Key; COLOR_NB],
     pub non_pawn_material: [Value; COLOR_NB],
     pub castling_rights: u8,
+    pub ep_square: Square,
     pub rule50: i32,
     pub plies_from_null: i32,
-    pub ep_square: Square,
 
+    // Recomputed per move (not copied in do_move prefix copy)
     pub key: Key,
     pub checkers_bb: Bitboard,
     pub blockers_for_king: [Bitboard; COLOR_NB],
@@ -146,6 +151,8 @@ pub struct StateInfo {
     pub repetition: i32,
     pub piece_placement: [u8; 32],
 }
+
+const STATE_COPY_BYTES: usize = core::mem::offset_of!(StateInfo, key);
 
 impl StateInfo {
     pub const fn new() -> Self {
@@ -229,18 +236,25 @@ pub struct Position {
     side_to_move: Color,
     game_ply: i32,
     chess960: bool,
-    pub state_stack: Vec<StateInfo>,
-    pub state_idx: usize,
+    state_stack: Vec<StateInfo>,
+    state_idx: usize,
+    cur_state: *mut StateInfo,
 }
+
+unsafe impl Send for Position {}
 
 impl Clone for Position {
     fn clone(&self) -> Self {
+        if self.state_stack.is_empty() {
+            return Self::empty_placeholder();
+        }
         let needed = (self.state_idx + MAX_PLY + 64).max(512);
         let mut state_stack = Vec::with_capacity(needed);
         for i in 0..=self.state_idx {
             state_stack.push(self.state_stack[i].clone());
         }
         state_stack.resize_with(needed, StateInfo::new);
+        let cur_state = unsafe { state_stack.as_mut_ptr().add(self.state_idx) };
         Self {
             board: self.board,
             by_type_bb: self.by_type_bb,
@@ -254,12 +268,15 @@ impl Clone for Position {
             chess960: self.chess960,
             state_stack,
             state_idx: self.state_idx,
+            cur_state,
         }
     }
 }
 
 impl Position {
     pub fn new() -> Self {
+        let mut state_stack = vec![StateInfo::new(); 1024];
+        let cur_state = state_stack.as_mut_ptr();
         Position {
             board: [Piece::NoPiece; SQUARE_NB],
             by_type_bb: [0; PIECE_TYPE_NB],
@@ -271,9 +288,54 @@ impl Position {
             side_to_move: Color::White,
             game_ply: 0,
             chess960: false,
-            state_stack: vec![StateInfo::new(); 1024],
+            state_stack,
             state_idx: 0,
+            cur_state,
         }
+    }
+
+    /// Zero-allocation placeholder for `std::mem::replace`.
+    pub fn empty_placeholder() -> Self {
+        Position {
+            board: [Piece::NoPiece; SQUARE_NB],
+            by_type_bb: [0; PIECE_TYPE_NB],
+            by_color_bb: [0; COLOR_NB],
+            piece_count: [0; PIECE_NB],
+            castling_rights_mask: [0; SQUARE_NB],
+            castling_rook_square: [Square::SqNone; CASTLING_RIGHT_NB],
+            castling_path: [0; CASTLING_RIGHT_NB],
+            side_to_move: Color::White,
+            game_ply: 0,
+            chess960: false,
+            state_stack: Vec::new(),
+            state_idx: 0,
+            cur_state: std::ptr::null_mut(),
+        }
+    }
+
+    /// Copies `src` into `self` while reusing `self.state_stack` allocation.
+    pub fn copy_from(&mut self, src: &Position) {
+        debug_assert!(!src.state_stack.is_empty());
+        self.board = src.board;
+        self.by_type_bb = src.by_type_bb;
+        self.by_color_bb = src.by_color_bb;
+        self.piece_count = src.piece_count;
+        self.castling_rights_mask = src.castling_rights_mask;
+        self.castling_rook_square = src.castling_rook_square;
+        self.castling_path = src.castling_path;
+        self.side_to_move = src.side_to_move;
+        self.game_ply = src.game_ply;
+        self.chess960 = src.chess960;
+        self.state_idx = src.state_idx;
+
+        let needed = (src.state_idx + MAX_PLY + 64).max(512);
+        if self.state_stack.len() < needed {
+            self.state_stack.resize_with(needed, StateInfo::new);
+        }
+        for i in 0..=src.state_idx {
+            self.state_stack[i] = src.state_stack[i].clone();
+        }
+        self.cur_state = unsafe { self.state_stack.as_mut_ptr().add(self.state_idx) };
     }
 
     pub fn ensure_capacity(&mut self, extra: usize) {
@@ -281,17 +343,28 @@ impl Position {
         if needed >= self.state_stack.len() {
             let new_len = (needed + 256).max(self.state_stack.len() * 2);
             self.state_stack.resize_with(new_len, StateInfo::new);
+            self.cur_state = unsafe { self.state_stack.as_mut_ptr().add(self.state_idx) };
         }
     }
 
     #[inline(always)]
     pub fn state(&self) -> &StateInfo {
-        unsafe { self.state_stack.get_unchecked(self.state_idx) }
+        debug_assert!(!self.cur_state.is_null() && self.state_idx < self.state_stack.len());
+        debug_assert_eq!(
+            self.cur_state as usize,
+            self.state_stack.as_ptr() as usize + self.state_idx * core::mem::size_of::<StateInfo>()
+        );
+        unsafe { &*self.cur_state }
     }
 
     #[inline(always)]
     pub fn state_mut(&mut self) -> &mut StateInfo {
-        unsafe { self.state_stack.get_unchecked_mut(self.state_idx) }
+        debug_assert!(!self.cur_state.is_null() && self.state_idx < self.state_stack.len());
+        debug_assert_eq!(
+            self.cur_state as usize,
+            self.state_stack.as_ptr() as usize + self.state_idx * core::mem::size_of::<StateInfo>()
+        );
+        unsafe { &mut *self.cur_state }
     }
 
     #[inline(always)]
@@ -991,7 +1064,11 @@ impl Position {
         self.castling_rook_square = [Square::SqNone; CASTLING_RIGHT_NB];
         self.castling_path = [0; CASTLING_RIGHT_NB];
         self.state_idx = 0;
+        if self.state_stack.is_empty() {
+            self.state_stack.resize_with(1024, StateInfo::new);
+        }
         self.state_stack[0] = StateInfo::default();
+        self.cur_state = self.state_stack.as_mut_ptr();
 
         let mut tokens = fen.split_whitespace();
         let piece_placement = tokens.next().ok_or("Empty FEN")?;
@@ -1428,41 +1505,19 @@ impl Position {
         history: Option<&crate::history::SharedHistories>,
     ) {
         debug_assert!(m.is_ok());
-        let prev_idx = self.state_idx;
+        debug_assert!(self.state_idx + 1 < self.state_stack.len());
+        let prev = self.cur_state;
+        let dst = unsafe { prev.add(1) };
         self.state_idx += 1;
+        self.cur_state = dst;
 
-        struct StatePrefix {
-            material_key: Key,
-            pawn_key: Key,
-            minor_piece_key: Key,
-            non_pawn_key: [Key; COLOR_NB],
-            non_pawn_material: [Value; COLOR_NB],
-            castling_rights: u8,
-            rule50: i32,
-            plies_from_null: i32,
-            ep_square: Square,
-            key: Key,
-            captured_piece: Piece,
-            checkers_bb: Bitboard,
+        unsafe {
+            std::ptr::copy_nonoverlapping(prev as *const u8, dst as *mut u8, STATE_COPY_BYTES);
+            (*dst).rule50 += 1;
+            (*dst).plies_from_null += 1;
         }
 
-        let prev = unsafe { self.state_stack.get_unchecked(prev_idx) };
-        let mut new_st = StatePrefix {
-            material_key: prev.material_key,
-            pawn_key: prev.pawn_key,
-            minor_piece_key: prev.minor_piece_key,
-            non_pawn_key: prev.non_pawn_key,
-            non_pawn_material: prev.non_pawn_material,
-            castling_rights: prev.castling_rights,
-            rule50: prev.rule50 + 1,
-            plies_from_null: prev.plies_from_null + 1,
-            ep_square: prev.ep_square,
-            key: prev.key,
-            captured_piece: Piece::NoPiece,
-            checkers_bb: 0,
-        };
-
-        let mut k = new_st.key ^ ZOBRIST.side;
+        let mut k = unsafe { (*prev).key } ^ ZOBRIST.side;
         self.game_ply += 1;
 
         let us = self.side_to_move;
@@ -1495,8 +1550,10 @@ impl Position {
 
             self.do_castling::<true>(us, from, &mut to, &mut rfrom, &mut rto, dts, dp);
             k ^= ZOBRIST.psq[captured as usize][rfrom.idx()] ^ ZOBRIST.psq[captured as usize][rto.idx()];
-            new_st.non_pawn_key[us as usize] ^=
-                ZOBRIST.psq[captured as usize][rfrom.idx()] ^ ZOBRIST.psq[captured as usize][rto.idx()];
+            unsafe {
+                (*dst).non_pawn_key[us as usize] ^=
+                    ZOBRIST.psq[captured as usize][rfrom.idx()] ^ ZOBRIST.psq[captured as usize][rto.idx()];
+            }
             captured = Piece::NoPiece;
         } else if captured != Piece::NoPiece {
             let mut capsq = to;
@@ -1506,13 +1563,15 @@ impl Position {
                     let dts = dirties.as_mut().map(|d| &mut d.dirty_threats);
                     self.remove_piece(capsq, dts);
                 }
-                new_st.pawn_key ^= ZOBRIST.psq[captured as usize][capsq.idx()];
+                unsafe { (*dst).pawn_key ^= ZOBRIST.psq[captured as usize][capsq.idx()]; }
             } else {
-                new_st.non_pawn_material[them as usize] -= PIECE_VALUE[captured as usize];
-                new_st.non_pawn_key[them as usize] ^= ZOBRIST.psq[captured as usize][capsq.idx()];
+                unsafe {
+                    (*dst).non_pawn_material[them as usize] -= PIECE_VALUE[captured as usize];
+                    (*dst).non_pawn_key[them as usize] ^= ZOBRIST.psq[captured as usize][capsq.idx()];
 
-                if type_of(captured) <= PieceType::Bishop {
-                    new_st.minor_piece_key ^= ZOBRIST.psq[captured as usize][capsq.idx()];
+                    if type_of(captured) <= PieceType::Bishop {
+                        (*dst).minor_piece_key ^= ZOBRIST.psq[captured as usize][capsq.idx()];
+                    }
                 }
             }
 
@@ -1522,9 +1581,11 @@ impl Position {
             }
 
             k ^= ZOBRIST.psq[captured as usize][capsq.idx()];
-            new_st.material_key ^= ZOBRIST.psq[captured as usize]
-                [(8 + self.piece_count[captured as usize] as usize - (m.move_type() != MoveType::EnPassant) as usize) & 63];
-            new_st.rule50 = 0;
+            unsafe {
+                (*dst).material_key ^= ZOBRIST.psq[captured as usize]
+                    [(8 + self.piece_count[captured as usize] as usize - (m.move_type() != MoveType::EnPassant) as usize) & 63];
+                (*dst).rule50 = 0;
+            }
         } else {
             if let Some(ref mut d) = dirties {
                 d.dirty_piece.remove_sq = Square::SqNone;
@@ -1534,71 +1595,73 @@ impl Position {
         let psq_from_to = ZOBRIST.psq[pc as usize][from.idx()] ^ ZOBRIST.psq[pc as usize][to.idx()];
         k ^= psq_from_to;
 
-        if new_st.ep_square != Square::SqNone {
-            k ^= ZOBRIST.enpassant[file_of(new_st.ep_square) as usize];
-            new_st.ep_square = Square::SqNone;
-        }
+        unsafe {
+            if (*dst).ep_square != Square::SqNone {
+                k ^= ZOBRIST.enpassant[file_of((*dst).ep_square) as usize];
+                (*dst).ep_square = Square::SqNone;
+            }
 
-        k ^= ZOBRIST.castling[new_st.castling_rights as usize & 15];
-        new_st.castling_rights &= !(self.castling_rights_mask[from.idx()] | self.castling_rights_mask[to.idx()]);
-        k ^= ZOBRIST.castling[new_st.castling_rights as usize & 15];
+            k ^= ZOBRIST.castling[(*dst).castling_rights as usize & 15];
+            (*dst).castling_rights &= !(self.castling_rights_mask[from.idx()] | self.castling_rights_mask[to.idx()]);
+            k ^= ZOBRIST.castling[(*dst).castling_rights as usize & 15];
 
-        if type_of(pc) == PieceType::Pawn {
-            if ((to as i32) ^ (from as i32)) == 16 {
-                let ep_square = unsafe { to.add_dir_unchecked(pawn_push(!us)) };
-                let pawns = pawn_attacks_bb(us, square_bb(ep_square)) & self.pieces_c_pt(them, PieceType::Pawn);
-                if pawns != 0 {
-                    let ksq = self.square(them, PieceType::King);
-                    let not_blockers = !unsafe { self.state_stack.get_unchecked(prev_idx) }.blockers_for_king[them as usize];
-                    let no_discovery = (square_bb(from) & not_blockers) != 0 || file_of(from) == file_of(ksq);
-                    if no_discovery && (pawns & (not_blockers | line_bb(ep_square, ksq))) != 0 {
-                        new_st.ep_square = ep_square;
-                        k ^= ZOBRIST.enpassant[file_of(ep_square) as usize];
+            if type_of(pc) == PieceType::Pawn {
+                if ((to as i32) ^ (from as i32)) == 16 {
+                    let ep_square = to.add_dir_unchecked(pawn_push(!us));
+                    let pawns = pawn_attacks_bb(us, square_bb(ep_square)) & self.pieces_c_pt(them, PieceType::Pawn);
+                    if pawns != 0 {
+                        let ksq = self.square(them, PieceType::King);
+                        let not_blockers = !(*prev).blockers_for_king[them as usize];
+                        let no_discovery = (square_bb(from) & not_blockers) != 0 || file_of(from) == file_of(ksq);
+                        if no_discovery && (pawns & (not_blockers | line_bb(ep_square, ksq))) != 0 {
+                            (*dst).ep_square = ep_square;
+                            k ^= ZOBRIST.enpassant[file_of(ep_square) as usize];
+                        }
                     }
+                } else if m.move_type() == MoveType::Promotion {
+                    let pt = m.promotion_type();
+                    let promotion = make_piece(us, pt);
+
+                    if let Some(ref mut d) = dirties {
+                        d.dirty_piece.add_pc = promotion;
+                        d.dirty_piece.add_sq = to;
+                        d.dirty_piece.to = Square::SqNone;
+                    }
+
+                    k ^= ZOBRIST.psq[promotion as usize][to.idx()];
+                    (*dst).material_key ^= ZOBRIST.psq[promotion as usize]
+                        [(8 + self.piece_count[promotion as usize] as usize) & 63]
+                        ^ ZOBRIST.psq[pc as usize][(8 + self.piece_count[pc as usize] as usize - 1) & 63];
+                    (*dst).non_pawn_key[us as usize] ^= ZOBRIST.psq[promotion as usize][to.idx()];
+
+                    if pt <= PieceType::Bishop {
+                        (*dst).minor_piece_key ^= ZOBRIST.psq[promotion as usize][to.idx()];
+                    }
+
+                    (*dst).non_pawn_material[us as usize] += PIECE_VALUE[promotion as usize];
                 }
-            } else if m.move_type() == MoveType::Promotion {
-                let pt = m.promotion_type();
-                let promotion = make_piece(us, pt);
 
-                if let Some(ref mut d) = dirties {
-                    d.dirty_piece.add_pc = promotion;
-                    d.dirty_piece.add_sq = to;
-                    d.dirty_piece.to = Square::SqNone;
+                (*dst).pawn_key ^= psq_from_to;
+                (*dst).rule50 = 0;
+            } else {
+                (*dst).non_pawn_key[us as usize] ^= psq_from_to;
+                if type_of(pc) <= PieceType::Bishop {
+                    (*dst).minor_piece_key ^= psq_from_to;
                 }
-
-                k ^= ZOBRIST.psq[promotion as usize][to.idx()];
-                new_st.material_key ^= ZOBRIST.psq[promotion as usize]
-                    [(8 + self.piece_count[promotion as usize] as usize) & 63]
-                    ^ ZOBRIST.psq[pc as usize][(8 + self.piece_count[pc as usize] as usize - 1) & 63];
-                new_st.non_pawn_key[us as usize] ^= ZOBRIST.psq[promotion as usize][to.idx()];
-
-                if pt <= PieceType::Bishop {
-                    new_st.minor_piece_key ^= ZOBRIST.psq[promotion as usize][to.idx()];
-                }
-
-                new_st.non_pawn_material[us as usize] += PIECE_VALUE[promotion as usize];
             }
 
-            new_st.pawn_key ^= psq_from_to;
-            new_st.rule50 = 0;
-        } else {
-            new_st.non_pawn_key[us as usize] ^= psq_from_to;
-            if type_of(pc) <= PieceType::Bishop {
-                new_st.minor_piece_key ^= psq_from_to;
+            (*dst).key = k;
+
+            if let Some(h) = history {
+                h.prefetch_keys(
+                    (*dst).pawn_key,
+                    (*dst).minor_piece_key,
+                    (*dst).non_pawn_key[0],
+                    (*dst).non_pawn_key[1],
+                    pc,
+                    to,
+                );
             }
-        }
-
-        new_st.key = k;
-
-        if let Some(h) = history {
-            h.prefetch_keys(
-                new_st.pawn_key,
-                new_st.minor_piece_key,
-                new_st.non_pawn_key[0],
-                new_st.non_pawn_key[1],
-                pc,
-                to,
-            );
         }
 
         if m.move_type() != MoveType::Castling {
@@ -1620,12 +1683,15 @@ impl Position {
             }
         }
 
-        new_st.captured_piece = captured;
-        new_st.checkers_bb = if gives_check {
+        let checkers_bb = if gives_check {
             self.attackers_to(self.square(them, PieceType::King), self.pieces()) & self.pieces_c(us)
         } else {
             0
         };
+        unsafe {
+            (*dst).captured_piece = captured;
+            (*dst).checkers_bb = checkers_bb;
+        }
 
         if let Some(ref mut d) = dirties {
             d.dirty_pawn_pairs.after[Color::White as usize] = self.pieces_c_pt(Color::White, PieceType::Pawn);
@@ -1633,48 +1699,29 @@ impl Position {
         }
 
         self.side_to_move = !self.side_to_move;
-        {
-            let dst = unsafe { self.state_stack.get_unchecked_mut(self.state_idx) };
-            dst.material_key = new_st.material_key;
-            dst.pawn_key = new_st.pawn_key;
-            dst.minor_piece_key = new_st.minor_piece_key;
-            dst.non_pawn_key = new_st.non_pawn_key;
-            dst.non_pawn_material = new_st.non_pawn_material;
-            dst.castling_rights = new_st.castling_rights;
-            dst.rule50 = new_st.rule50;
-            dst.plies_from_null = new_st.plies_from_null;
-            dst.ep_square = new_st.ep_square;
-            dst.key = new_st.key;
-            dst.captured_piece = new_st.captured_piece;
-            dst.checkers_bb = new_st.checkers_bb;
-            pack_pieces_into(&self.board, &mut dst.piece_placement);
-        }
+        pack_pieces_into(&self.board, unsafe { &mut (*dst).piece_placement });
         self.set_extra_bitboards();
 
         // Calculate the repetition info. It is the ply distance from the previous
         // occurrence of the same position, negative in the 3-fold case, or zero
         // if the position was not repeated.
         let mut rep = 0;
-        let cur_idx = self.state_idx;
-        let cur_st = unsafe { self.state_stack.get_unchecked(cur_idx) };
+        let cur_st = unsafe { &*dst };
         let end = std::cmp::min(cur_st.rule50, cur_st.plies_from_null);
         if end >= 4 {
             let cur_key = cur_st.key;
-            let cur_placement = cur_st.piece_placement;
-            let max_i = std::cmp::min(end as usize, cur_idx);
-            let mut i = 4;
+            let max_i = std::cmp::min(end as usize, self.state_idx);
+            let mut i = 4usize;
             while i <= max_i {
-                let prev_st = unsafe { self.state_stack.get_unchecked(cur_idx - i) };
-                if prev_st.key == cur_key && prev_st.piece_placement == cur_placement {
+                let prev_st = unsafe { &*dst.sub(i) };
+                if prev_st.key == cur_key && prev_st.piece_placement == cur_st.piece_placement {
                     rep = if prev_st.repetition != 0 { -(i as i32) } else { i as i32 };
                     break;
                 }
                 i += 2;
             }
         }
-        unsafe {
-            self.state_stack.get_unchecked_mut(cur_idx).repetition = rep;
-        }
+        unsafe { (*dst).repetition = rep; }
     }
 
     #[inline(never)]
@@ -1702,45 +1749,42 @@ impl Position {
             if captured != Piece::NoPiece {
                 let mut capsq = to;
                 if m.move_type() == MoveType::EnPassant {
-                    capsq = capsq.add_dir(pawn_push(!us));
+                    capsq = unsafe { capsq.add_dir_unchecked(pawn_push(!us)) };
                 }
                 self.put_piece(captured, capsq, None);
             }
         }
 
         self.state_idx -= 1;
+        self.cur_state = unsafe { self.cur_state.sub(1) };
         self.game_ply -= 1;
     }
 
     #[inline(never)]
     pub fn do_null_move(&mut self) {
         debug_assert!(self.checkers() == 0);
-        let prev_idx = self.state_idx;
-        let new_idx = prev_idx + 1;
-        self.state_idx = new_idx;
+        debug_assert!(self.state_idx + 1 < self.state_stack.len());
+        let src = self.cur_state;
+        let dst = unsafe { src.add(1) };
+        self.state_idx += 1;
+        self.cur_state = dst;
 
-        let (head, tail) = self.state_stack.split_at_mut(new_idx);
-        let src = unsafe { head.get_unchecked(prev_idx) };
-        let dst = unsafe { tail.get_unchecked_mut(0) };
-
-        dst.material_key = src.material_key;
-        dst.pawn_key = src.pawn_key;
-        dst.minor_piece_key = src.minor_piece_key;
-        dst.non_pawn_key = src.non_pawn_key;
-        dst.non_pawn_material = src.non_pawn_material;
-        dst.castling_rights = src.castling_rights;
-        dst.rule50 = src.rule50;
-        dst.plies_from_null = 0;
-        dst.ep_square = Square::SqNone;
-        let mut k = src.key ^ ZOBRIST.side;
-        if src.ep_square != Square::SqNone {
-            k ^= ZOBRIST.enpassant[file_of(src.ep_square) as usize];
+        unsafe {
+            std::ptr::copy_nonoverlapping(src as *const u8, dst as *mut u8, STATE_COPY_BYTES);
+            let src_ref = &*src;
+            let dst_ref = &mut *dst;
+            dst_ref.plies_from_null = 0;
+            dst_ref.ep_square = Square::SqNone;
+            let mut k = src_ref.key ^ ZOBRIST.side;
+            if src_ref.ep_square != Square::SqNone {
+                k ^= ZOBRIST.enpassant[file_of(src_ref.ep_square) as usize];
+            }
+            dst_ref.key = k;
+            dst_ref.checkers_bb = 0;
+            dst_ref.captured_piece = Piece::NoPiece;
+            dst_ref.piece_placement = src_ref.piece_placement;
+            dst_ref.repetition = 0;
         }
-        dst.key = k;
-        dst.checkers_bb = 0;
-        dst.captured_piece = Piece::NoPiece;
-        dst.piece_placement = src.piece_placement;
-        dst.repetition = 0;
 
         self.side_to_move = !self.side_to_move;
         self.set_extra_bitboards();
@@ -1749,6 +1793,7 @@ impl Position {
     pub fn undo_null_move(&mut self) {
         debug_assert!(self.checkers() == 0);
         self.state_idx -= 1;
+        self.cur_state = unsafe { self.cur_state.sub(1) };
 
         self.side_to_move = !self.side_to_move;
     }
@@ -1888,16 +1933,18 @@ impl Position {
     }
 
     pub fn has_repeated(&self) -> bool {
-        let mut curr_idx = self.state_idx;
+        let mut ptr = self.cur_state as *const StateInfo;
+        let mut remaining = self.state_idx;
         let mut end = std::cmp::min(self.state().rule50, self.state().plies_from_null);
         while end >= 4 {
-            if self.state_stack[curr_idx].repetition != 0 {
+            if unsafe { (*ptr).repetition } != 0 {
                 return true;
             }
-            if curr_idx == 0 {
+            if remaining == 0 {
                 break;
             }
-            curr_idx -= 1;
+            ptr = unsafe { ptr.sub(1) };
+            remaining -= 1;
             end -= 1;
         }
         false
@@ -1915,15 +1962,14 @@ impl Position {
         if curr_idx < 1 {
             return false;
         }
-        let mut other = original_key ^ self.state_stack[curr_idx - 1].key ^ ZOBRIST.side;
+        let max_i = std::cmp::min(end as usize, curr_idx);
+        let cur_ptr = self.cur_state as *const StateInfo;
+        let mut other = original_key ^ unsafe { (*cur_ptr.sub(1)).key } ^ ZOBRIST.side;
 
-        let mut i = 3;
-        while i <= end as usize {
-            if curr_idx < i {
-                break;
-            }
-            let prev_st = &self.state_stack[curr_idx - i];
-            other ^= self.state_stack[curr_idx - (i - 1)].key ^ prev_st.key ^ ZOBRIST.side;
+        let mut i = 3usize;
+        while i <= max_i {
+            let prev_st = unsafe { &*cur_ptr.sub(i) };
+            other ^= unsafe { (*cur_ptr.sub(i - 1)).key } ^ prev_st.key ^ ZOBRIST.side;
 
             if other == 0 {
                 let move_key = original_key ^ prev_st.key;
@@ -1938,7 +1984,7 @@ impl Position {
                         swap_nibble(&mut b, s1, s2);
 
                         if b == prev_st.piece_placement {
-                            if (ply as usize) > i || prev_st.repetition != 0 {
+                            if ply > i || prev_st.repetition != 0 {
                                 return true;
                             }
                         }
@@ -2000,11 +2046,11 @@ const fn generate_cuckoo() -> CuckooTables {
             let mut s2_u = s1_u + 1;
             while s2_u < 64 {
                 let s2 = Square::from_usize(s2_u);
-                if (crate::attacks::PSEUDO_ATTACKS[pt as usize][s1_u] & square_bb(s2)) != 0 {
+                if (crate::attacks::PSEUDO_ATTACKS_DATA[pt as usize][s1_u] & square_bb(s2)) != 0 {
                     let mut move_ = Move::new(s1, s2);
-                    let mut key = ZOBRIST.psq[pc as usize][s1_u]
-                        ^ ZOBRIST.psq[pc as usize][s2_u]
-                        ^ ZOBRIST.side;
+                    let mut key = ZOBRIST_DATA.psq[pc as usize][s1_u]
+                        ^ ZOBRIST_DATA.psq[pc as usize][s2_u]
+                        ^ ZOBRIST_DATA.side;
                     let mut i = h1(key);
                     loop {
                         let tmp_k = c[i];

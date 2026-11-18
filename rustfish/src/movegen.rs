@@ -12,9 +12,9 @@ pub enum GenType {
     All = 3,
 }
 
-const GEN_CAPTURES: u8 = 0;
-const GEN_QUIETS: u8 = 1;
-const GEN_EVASIONS: u8 = 2;
+pub const GEN_CAPTURES: u8 = 0;
+pub const GEN_QUIETS: u8 = 1;
+pub const GEN_EVASIONS: u8 = 2;
 
 const US_WHITE: u8 = 0;
 const US_BLACK: u8 = 1;
@@ -370,6 +370,20 @@ fn generate_moves_typed<const US: u8, const GEN: u8>(
     }
 
     cur
+}
+
+#[inline(always)]
+pub fn generate_moves_for<const GEN: u8>(
+    pos: &Position,
+    move_list: &mut [MaybeUninit<Move>],
+    cur: usize,
+) -> usize {
+    debug_assert!(move_list.len() >= MAX_MOVES);
+    if pos.side_to_move() == Color::White {
+        generate_moves_typed::<US_WHITE, GEN>(pos, move_list, cur)
+    } else {
+        generate_moves_typed::<US_BLACK, GEN>(pos, move_list, cur)
+    }
 }
 
 #[inline(never)]
